@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>CairoSharp</id>
+    <version>3.24.24.95</version>
+    <authors>'GtkSharp Contributors'</authors>
+    <projectUrl>https://github.com/GtkSharp/GtkSharp</projectUrl>
+    <description>CairoSharp is a C# wrapper for the Cairo library.</description>
+    <tags>cairo cairosharp cairo-sharp wrapper</tags>
+    <repository url="https://github.com/GtkSharp/GtkSharp" />
+    <dependencies>
+      <group targetFramework="net6.0" />
+      <group targetFramework=".NETStandard2.0" />
+    </dependencies>
+  </metadata>
+</package>

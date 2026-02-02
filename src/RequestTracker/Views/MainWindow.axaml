@@ -6,66 +6,124 @@
         xmlns:wv="clr-namespace:AvaloniaWebView;assembly=Avalonia.WebView"
         xmlns:models="using:RequestTracker.Models"
         xmlns:jsonModels="using:RequestTracker.Models.Json"
+        xmlns:conv="using:RequestTracker.Converters"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="RequestTracker.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="RequestTracker">
+        Title="RequestTracker"
+        Width="1000" Height="700"
+        WindowStartupLocation="CenterScreen"
+        WindowState="Normal"
+        ShowInTaskbar="True">
+
+    <Window.Resources>
+        <conv:PathToWslConverter x:Key="PathToWsl"/>
+    </Window.Resources>
 
     <Design.DataContext>
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <Grid ColumnDefinitions="300, 4, *">
-        <Grid Grid.Column="0" RowDefinitions="*, 4, 150">
-            <TreeView Grid.Row="0" ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}">
-                <TreeView.ItemTemplate>
-                    <TreeDataTemplate ItemsSource="{Binding Children}" DataType="models:FileNode">
-                        <TextBlock Text="{Binding Name}"/>
-                    </TreeDataTemplate>
-                </TreeView.ItemTemplate>
-                <TreeView.ItemContainerTheme>
-                    <ControlTheme TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}" x:DataType="models:FileNode">
-                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
-                    </ControlTheme>
-                </TreeView.ItemContainerTheme>
-            </TreeView>
-            <GridSplitter Grid.Row="1" ResizeDirection="Rows" Background="LightGray"/>
-            <Border Grid.Row="2" BorderBrush="Gray" BorderThickness="0,1,0,0">
-                <ListBox ItemsSource="{Binding ChangeLog}" Background="#f8f8f8"/>
-            </Border>
-        </Grid>
-        
-        <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="LightGray"/>
+    <Grid x:Name="MainGrid" ColumnDefinitions="300, 4, *" RowDefinitions="*, 4, 150">
+        <!-- Tree View -->
+        <TreeView x:Name="TreePanel" Grid.Column="0" Grid.Row="0" ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}">
+            <TreeView.ItemTemplate>
+                <TreeDataTemplate ItemsSource="{Binding Children}" DataType="models:FileNode">
+                    <TextBlock Text="{Binding Name}"/>
+                </TreeDataTemplate>
+            </TreeView.ItemTemplate>
+            <TreeView.ItemContainerTheme>
+                <ControlTheme TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}" x:DataType="models:FileNode">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                </ControlTheme>
+            </TreeView.ItemContainerTheme>
+        </TreeView>
 
-        <Grid Grid.Column="2" RowDefinitions="Auto, *, Auto">
+        <!-- Splitter 1 (Vertical separator in Left Pane for Landscape / Top separator in Portrait) -->
+        <GridSplitter x:Name="Splitter1" Grid.Column="0" Grid.Row="1" ResizeDirection="Rows" Background="LightGray"/>
+
+        <!-- History Panel -->
+        <Border x:Name="HistoryPanel" Grid.Column="0" Grid.Row="2" BorderBrush="Gray" BorderThickness="0,1,0,0">
+            <ListBox ItemsSource="{Binding ChangeLog}" Background="#f8f8f8"/>
+        </Border>
+        
+        <!-- Splitter 2 (Horizontal separator between Panes in Landscape / Bottom separator in Portrait) -->
+        <GridSplitter x:Name="Splitter2" Grid.Column="1" Grid.Row="0" Grid.RowSpan="3" ResizeDirection="Columns" Background="LightGray"/>
+
+        <!-- Viewer Panel -->
+        <Grid x:Name="ViewerPanel" Grid.Column="2" Grid.Row="0" Grid.RowSpan="3" RowDefinitions="Auto, *, Auto">
              <!-- Navigation Toolbar -->
              <Grid Grid.Row="0" ColumnDefinitions="Auto, Auto, Auto, *" Margin="5">
-                <Button Grid.Column="0" Content="&lt;" Command="{Binding NavigateBackCommand}" Margin="0,0,5,0" Width="30"/>
-                <Button Grid.Column="1" Content="&gt;" Command="{Binding NavigateForwardCommand}" Margin="0,0,5,0" Width="30"/>
-                <Button Grid.Column="2" Content="R" Command="{Binding RefreshCommand}" Margin="0,0,5,0" Width="30" ToolTip.Tip="Refresh"/>
-                <TextBox Grid.Column="3" Text="{Binding SelectedNode.Path, Mode=OneWay}" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                <Button Grid.Column="0" Command="{Binding NavigateBackCommand}" Margin="0,0,5,0" Width="30" ToolTip.Tip="Back">
+                    <PathIcon Data="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" Width="10" Height="10"/>
+                </Button>
+                <Button Grid.Column="1" Command="{Binding NavigateForwardCommand}" Margin="0,0,5,0" Width="30" ToolTip.Tip="Forward">
+                    <PathIcon Data="M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z" Width="10" Height="10"/>
+                </Button>
+                <Button Grid.Column="2" Command="{Binding RefreshCommand}" Margin="0,0,5,0" Width="30" ToolTip.Tip="Refresh">
+                    <PathIcon Data="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z" Width="10" Height="10"/>
+                </Button>
+                <TextBox Grid.Column="3" Text="{Binding SelectedNode.Path, Mode=OneWay, Converter={StaticResource PathToWsl}}" IsReadOnly="True" VerticalContentAlignment="Center"/>
              </Grid>
              
-             <!-- Markdown View -->
+             <!-- Markdown View (WebView only on Windows; on Linux WebView is removed in code-behind to avoid separate GTK window) -->
              <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsMarkdownVisible}">
-                <wv:WebView Url="{Binding HtmlSource}" NavigationStarting="OnNavigationStarting"/>
+                <Grid x:Name="MarkdownContentGrid">
+                    <wv:WebView x:Name="MarkdownWebView" Url="{Binding HtmlSource}" NavigationStarting="OnNavigationStarting"/>
+                    <Border x:Name="MarkdownPlaceholder" IsVisible="{Binding IsWebViewPlaceholderVisible}" Background="#f5f5f5" Padding="16">
+                        <TextBlock Text="Markdown preview uses WebView and is not embedded on this platform. Run on Windows for HTML preview, or open .json files for the tree view."
+                                   TextWrapping="Wrap" Foreground="Gray" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="400" TextAlignment="Center"/>
+                    </Border>
+                </Grid>
              </Border>
 
-             <!-- JSON Tree View -->
+             <!-- JSON Tree View with Summary and Search -->
              <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsJsonVisible}">
-                <TreeView ItemsSource="{Binding JsonTree}">
-                    <TreeView.ItemTemplate>
-                        <TreeDataTemplate ItemsSource="{Binding Children}" DataType="jsonModels:JsonTreeNode">
-                            <StackPanel Orientation="Horizontal" Spacing="5" Background="Transparent" DoubleTapped="OnJsonNodeDoubleTapped">
-                                <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#007acc"/>
-                                <TextBlock Text=":" Foreground="Gray"/>
-                                <TextBlock Text="{Binding Value}" Foreground="#ce9178"/>
-                                <TextBlock Text="{Binding Type}" Foreground="Gray" FontStyle="Italic" FontSize="10" VerticalAlignment="Center" Margin="5,0,0,0"/>
-                            </StackPanel>
-                        </TreeDataTemplate>
-                    </TreeView.ItemTemplate>
-                </TreeView>
+                <Grid RowDefinitions="Auto, Auto, Auto, *">
+                    <!-- Summary -->
+                    <Border Grid.Row="0" Background="#f0f0f0" Padding="8" Margin="0,0,0,4">
+                        <ItemsControl ItemsSource="{Binding JsonLogSummary.SummaryLines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="12" Margin="0,1"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+                    <!-- Search -->
+                    <Grid Grid.Row="1" ColumnDefinitions="Auto, *" Margin="0,0,0,4">
+                        <TextBlock Grid.Column="0" Text="Search:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBox Grid.Column="1" Text="{Binding SearchQuery}" Watermark="Request ID, text, model, timestamp..."/>
+                    </Grid>
+                    <!-- Search results index -->
+                    <Border Grid.Row="2" MaxHeight="140" BorderBrush="#ddd" BorderThickness="0,0,0,1" Padding="4" Margin="0,0,0,4">
+                        <Grid RowDefinitions="Auto, *">
+                            <TextBlock Grid.Row="0" Text="Search index (select to jump to tree)" FontWeight="SemiBold" FontSize="11" Margin="0,0,0,4"/>
+                            <ListBox Grid.Row="1" ItemsSource="{Binding FilteredSearchEntries}" SelectedItem="{Binding SelectedSearchEntry}"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="jsonModels:SearchableEntry">
+                                        <TextBlock Text="{Binding ListLine}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" FontSize="11"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                    <!-- Tree -->
+                    <TreeView Grid.Row="3" ItemsSource="{Binding JsonTree}" SelectedItem="{Binding SelectedJsonNode}">
+                        <TreeView.ItemTemplate>
+                            <TreeDataTemplate ItemsSource="{Binding Children}" DataType="jsonModels:JsonTreeNode">
+                                <StackPanel Orientation="Horizontal" Spacing="5" Background="Transparent" DoubleTapped="OnJsonNodeDoubleTapped">
+                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#007acc"/>
+                                    <TextBlock Text=":" Foreground="Gray"/>
+                                    <TextBlock Text="{Binding Value}" Foreground="#ce9178"/>
+                                    <TextBlock Text="{Binding Type}" Foreground="Gray" FontStyle="Italic" FontSize="10" VerticalAlignment="Center" Margin="5,0,0,0"/>
+                                </StackPanel>
+                            </TreeDataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                </Grid>
              </Border>
 
              <!-- Status Bar -->

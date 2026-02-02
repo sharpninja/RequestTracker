@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>PangoSharp</id>
+    <version>3.24.24.95</version>
+    <authors>'GtkSharp Contributors'</authors>
+    <projectUrl>https://github.com/GtkSharp/GtkSharp</projectUrl>
+    <description>PangoSharp is a C# wrapper for the Pango library.</description>
+    <tags>pango pangosharp pango-sharp wrapper</tags>
+    <repository url="https://github.com/GtkSharp/GtkSharp" />
+    <dependencies>
+      <group targetFramework="net6.0">
+        <dependency id="CairoSharp" version="3.24.24.95" exclude="Build,Analyzers" />
+        <dependency id="GLibSharp" version="3.24.24.95" exclude="Build,Analyzers" />
+      </group>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="CairoSharp" version="3.24.24.95" exclude="Build,Analyzers" />
+        <dependency id="GLibSharp" version="3.24.24.95" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>

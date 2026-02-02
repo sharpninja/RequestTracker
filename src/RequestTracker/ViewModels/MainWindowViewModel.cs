@@ -1,23 +1,33 @@
-﻿using System;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using RequestTracker.Converters;
 using RequestTracker.Models;
 using RequestTracker.Models.Json;
+using RequestTracker.Services;
 
 namespace RequestTracker.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {
     private const string TargetPath = @"E:\github\FunWasHad\docs\requests";
+
+    /// <summary>
+    /// Target path resolved for the current OS (Windows path on Windows, /mnt/... on Linux).
+    /// </summary>
+    private static string GetResolvedTargetPath() => PathConverter.ToDisplayPath(TargetPath);
+
     private FileSystemWatcher? _watcher;
+    private readonly IClipboardService _clipboardService;
 
     [ObservableProperty]
     private ObservableCollection<FileNode> _nodes = new();
@@ -41,7 +51,35 @@ public partial class MainWindowViewModel : ViewModelBase
     private ObservableCollection<JsonTreeNode> _jsonTree = new();
 
     [ObservableProperty]
-    private string _statusMessage;
+    private JsonLogSummary? _jsonLogSummary;
+
+    [ObservableProperty]
+    private ObservableCollection<SearchableEntry> _searchableEntries = new();
+
+    [ObservableProperty]
+    private string _searchQuery = "";
+
+    [ObservableProperty]
+    private ObservableCollection<SearchableEntry> _filteredSearchEntries = new();
+
+    [ObservableProperty]
+    private SearchableEntry? _selectedSearchEntry;
+
+    [ObservableProperty]
+    private JsonTreeNode? _selectedJsonNode;
+
+    [ObservableProperty]
+    private string _statusMessage = "";
+
+    /// <summary>
+    /// True on Windows; false on Linux to avoid WebView creating a separate GTK window and blocking the main app window.
+    /// </summary>
+    public bool IsWebViewSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+    /// <summary>
+    /// True when WebView is not used (Linux); show placeholder instead.
+    /// </summary>
+    public bool IsWebViewPlaceholderVisible => !IsWebViewSupported;
 
     private string? _currentMarkdownPath;
     
@@ -50,10 +88,50 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly Stack<FileNode> _forwardStack = new();
     private bool _isNavigatingHistory;
 
-    public MainWindowViewModel()
+    public MainWindowViewModel() : this(new ClipboardService())
     {
+    }
+
+    public MainWindowViewModel(IClipboardService clipboardService)
+    {
+        _clipboardService = clipboardService;
         InitializeTree();
         SetupWatcher();
+    }
+
+    partial void OnSearchQueryChanged(string value)
+    {
+        UpdateFilteredSearchEntries();
+    }
+
+    partial void OnSelectedSearchEntryChanged(SearchableEntry? value)
+    {
+        if (value == null) return;
+        var node = FindJsonNodeBySourcePath(JsonTree, value.SourcePath);
+        if (node != null)
+        {
+            SelectedJsonNode = node;
+            ExpandToJsonNode(JsonTree, node);
+        }
+    }
+
+    private void UpdateFilteredSearchEntries()
+    {
+        var q = (SearchQuery ?? "").Trim();
+        if (string.IsNullOrEmpty(q))
+        {
+            FilteredSearchEntries = new ObservableCollection<SearchableEntry>(SearchableEntries);
+            return;
+        }
+        var lower = q.ToLowerInvariant();
+        var filtered = SearchableEntries
+            .Where(e => (e.SearchText ?? "").ToLowerInvariant().Contains(lower) ||
+                        (e.RequestId ?? "").ToLowerInvariant().Contains(lower) ||
+                        (e.DisplayText ?? "").ToLowerInvariant().Contains(lower) ||
+                        (e.Model ?? "").ToLowerInvariant().Contains(lower) ||
+                        (e.Timestamp ?? "").ToLowerInvariant().Contains(lower))
+            .ToList();
+        FilteredSearchEntries = new ObservableCollection<SearchableEntry>(filtered);
     }
 
     [RelayCommand(CanExecute = nameof(CanNavigateBack))]
@@ -128,6 +206,33 @@ public partial class MainWindowViewModel : ViewModelBase
         {
              ExpandToNode(Nodes, value);
         }
+    }
+
+    [RelayCommand]
+    private async Task CopyText(string text)
+    {
+        if (!string.IsNullOrEmpty(text))
+        {
+            await _clipboardService.SetTextAsync(text);
+            SetStatus($"Copied: {text}");
+        }
+    }
+
+    public bool ShouldInterceptNavigation(Uri url)
+    {
+        if (url.Scheme == "file")
+        {
+            string path = url.LocalPath;
+            if (path.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) return false;
+
+            if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || 
+                path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleNavigation(path);
+                return true;
+            }
+        }
+        return false;
     }
 
     public void HandleNavigation(string path)
@@ -257,6 +362,43 @@ public partial class MainWindowViewModel : ViewModelBase
         return null;
     }
 
+    private static JsonTreeNode? FindJsonNodeBySourcePath(ObservableCollection<JsonTreeNode> nodes, string sourcePath)
+    {
+        if (string.IsNullOrEmpty(sourcePath)) return null;
+        foreach (var node in nodes)
+        {
+            if (string.Equals(node.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                return node;
+            var found = FindJsonNodeBySourcePath(node.Children, sourcePath);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static void ExpandToJsonNode(ObservableCollection<JsonTreeNode> nodes, JsonTreeNode target)
+    {
+        foreach (var node in nodes)
+        {
+            if (node == target) return;
+            if (ContainsJsonNode(node, target))
+            {
+                node.IsExpanded = true;
+                ExpandToJsonNode(node.Children, target);
+                return;
+            }
+        }
+    }
+
+    private static bool ContainsJsonNode(JsonTreeNode parent, JsonTreeNode target)
+    {
+        foreach (var child in parent.Children)
+        {
+            if (child == target) return true;
+            if (ContainsJsonNode(child, target)) return true;
+        }
+        return false;
+    }
+
 
     private void GenerateAndNavigate(FileNode? node)
     {
@@ -366,46 +508,211 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             string jsonContent = File.ReadAllText(path);
             JsonTree.Clear();
+            SearchableEntries.Clear();
+            JsonLogSummary = null;
 
-            // Try to detect type and deserialize to specific model first
-            // But for display, we want a tree. 
-            // We can deserialize to specific model to validate, then use JsonNode for tree generation
-            // or reflect over the deserialized model.
-            // Using JsonNode is easier for generic tree display.
-            
-            // Determine Schema
-            string schemaType = "Unknown";
             var jsonNode = JsonNode.Parse(jsonContent);
+            string schemaType = "Unknown";
+            var summary = new JsonLogSummary();
+            UnifiedSessionLog? unifiedLog = null;
+
             if (jsonNode is JsonObject obj)
             {
                 if (obj.ContainsKey("sessionId") && obj.ContainsKey("statistics"))
                 {
                     schemaType = "Copilot Session Log";
-                    // Deserialize to validate
                     var model = JsonSerializer.Deserialize<CopilotSessionLog>(jsonContent);
+                    if (model != null)
+                    {
+                        BuildCopilotSummaryAndIndex(model, summary); // Keep for stats
+                        unifiedLog = UnifiedLogFactory.Create(model);
+                    }
                 }
                 else if (obj.ContainsKey("entries") && obj.ContainsKey("session"))
                 {
                     schemaType = "Cursor Request Log";
-                    // Deserialize to validate
                     var model = JsonSerializer.Deserialize<CursorRequestLog>(jsonContent);
+                    if (model != null)
+                    {
+                        BuildCursorSummaryAndIndex(model, summary); // Keep for stats
+                        unifiedLog = UnifiedLogFactory.Create(model);
+                    }
                 }
             }
 
-            var root = new JsonTreeNode("Root", schemaType, "Object");
-            root.IsExpanded = true;
-            BuildJsonTree(jsonNode, root);
-            JsonTree.Add(root);
+            if (unifiedLog != null)
+            {
+                // Force usage of Unified Model for Tree and Search Index
+                // This ensures the UI reflects the Unified Format as requested
+                schemaType = $"{unifiedLog.SourceType} (Unified)";
+                
+                // Rebuild Search Index based on Unified Log to ensure paths match the new tree (entries[i])
+                BuildUnifiedSummaryAndIndex(unifiedLog, summary);
+                
+                // Serialize Unified Log to JsonNode for the Tree
+                var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false };
+                var unifiedNode = JsonSerializer.SerializeToNode(unifiedLog, options);
+                
+                // Update Summary Header
+                 summary.SummaryLines.Clear();
+                 summary.SummaryLines.Add($"Type: {unifiedLog.SourceType}");
+                 summary.SummaryLines.Add($"Session: {unifiedLog.SessionId}");
+                 summary.SummaryLines.Add($"Entries: {unifiedLog.EntryCount}");
+                 if (!string.IsNullOrEmpty(unifiedLog.Model)) 
+                     summary.SummaryLines.Add($"Model: {unifiedLog.Model}");
+                 if (unifiedLog.LastUpdated.HasValue) 
+                     summary.SummaryLines.Add($"Last Updated: {unifiedLog.LastUpdated}");
+                     
+                // Retain the rich stats from the specific parsers if available (StatsByModel, etc) 
+                // but prepend Unified info.
+            
+                JsonLogSummary = summary;
+                
+                var root = new JsonTreeNode("Root", schemaType, "Object");
+                root.IsExpanded = true;
+                BuildJsonTree(unifiedNode, root, null);
+                JsonTree.Add(root);
+            }
+            else
+            {
+                // Fallback to raw view
+                summary.SchemaType = schemaType;
+                summary.SummaryLines.Clear();
+                summary.SummaryLines.Add($"Schema: {schemaType}");
+                summary.SummaryLines.Add($"Total: {summary.TotalCount}");
+                if (!string.IsNullOrEmpty(summary.StatsByModel)) summary.SummaryLines.Add(summary.StatsByModel);
+                if (!string.IsNullOrEmpty(summary.StatsBySuccess)) summary.SummaryLines.Add(summary.StatsBySuccess);
+                if (!string.IsNullOrEmpty(summary.StatsCostOrTokens)) summary.SummaryLines.Add(summary.StatsCostOrTokens);
+                JsonLogSummary = summary;
+
+                var root = new JsonTreeNode("Root", schemaType, "Object");
+                root.IsExpanded = true;
+                BuildJsonTree(jsonNode, root, null);
+                JsonTree.Add(root);
+            }
+
+            UpdateFilteredSearchEntries();
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error parsing JSON: {ex}");
             JsonTree.Clear();
+            SearchableEntries.Clear();
+            FilteredSearchEntries.Clear();
+            JsonLogSummary = null;
             JsonTree.Add(new JsonTreeNode("Error", ex.Message, "Error"));
         }
     }
 
-    private void BuildJsonTree(JsonNode? node, JsonTreeNode parent)
+    private void BuildCopilotSummaryAndIndex(CopilotSessionLog log, JsonLogSummary summary)
+    {
+        var requests = log.Requests ?? new List<CopilotRequestEntry>();
+        summary.TotalCount = requests.Count;
+        summary.SearchIndex = new List<SearchableEntry>();
+
+        var byModel = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < requests.Count; i++)
+        {
+            var r = requests[i];
+            var model = r.Model ?? "(unknown)";
+            byModel[model] = byModel.GetValueOrDefault(model) + 1;
+
+            var display = (r.Slug ?? r.Title ?? r.UserRequest ?? "").Trim();
+            if (display.Length > 60) display = display.Substring(0, 57) + "...";
+            var searchText = string.Join(" ", r.RequestId ?? "", r.Slug ?? "", r.Title ?? "", r.UserRequest ?? "", r.Model ?? "", r.Timestamp?.ToString() ?? "");
+            summary.SearchIndex.Add(new SearchableEntry
+            {
+                RequestId = r.RequestId ?? "",
+                DisplayText = string.IsNullOrEmpty(display) ? $"Request {i + 1}" : display,
+                Timestamp = r.Timestamp?.ToString("o") ?? "",
+                Model = r.Model ?? "",
+                EntryIndex = i,
+                SourcePath = $"requests[{i}]",
+                SearchText = searchText
+            });
+        }
+        summary.StatsByModel = "By model: " + string.Join(", ", byModel.Select(kv => $"{kv.Key}: {kv.Value}"));
+        if (log.Statistics != null)
+        {
+            var s = log.Statistics;
+            summary.StatsBySuccess = $"Completed: {s.CompletedCount}, In progress: {s.InProgressCount}, Failed: {s.FailedCount}";
+            if (s.AverageSuccessScore.HasValue) summary.StatsBySuccess += $", Avg score: {s.AverageSuccessScore:F1}";
+            if (s.TotalNetTokens.HasValue) summary.StatsCostOrTokens = $"Total tokens: {s.TotalNetTokens:N0}";
+            if (s.TotalNetPremiumRequests.HasValue) summary.StatsCostOrTokens += $", Premium requests: {s.TotalNetPremiumRequests:N0}";
+        }
+    }
+
+    private void BuildCursorSummaryAndIndex(CursorRequestLog log, JsonLogSummary summary)
+    {
+        var entries = log.Entries ?? new List<CursorRequestEntry>();
+        summary.TotalCount = entries.Count;
+        summary.SearchIndex = new List<SearchableEntry>();
+
+        var byModel = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var successScores = new List<int>();
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var e = entries[i];
+            var model = e.Model ?? "(unknown)";
+            byModel[model] = byModel.GetValueOrDefault(model) + 1;
+            if (e.Successfulness?.Score.HasValue == true) successScores.Add(e.Successfulness.Score!.Value);
+
+            var display = (e.ExactRequest ?? e.ExactRequestNote ?? "").Trim();
+            if (display.Length > 60) display = display.Substring(0, 57) + "...";
+            var searchText = string.Join(" ", e.RequestId ?? "", e.ExactRequest ?? "", e.ExactRequestNote ?? "", e.Model ?? "", e.Timestamp ?? "",
+                e.Successfulness?.Score?.ToString() ?? "", e.ActionsTaken ?? new List<string>());
+            summary.SearchIndex.Add(new SearchableEntry
+            {
+                RequestId = e.RequestId ?? "",
+                DisplayText = string.IsNullOrEmpty(display) ? $"Entry {i + 1}" : display,
+                Timestamp = e.Timestamp ?? "",
+                Model = e.Model ?? "",
+                EntryIndex = i,
+                SourcePath = $"entries[{i}]",
+                SearchText = searchText
+            });
+        }
+        summary.StatsByModel = "By model: " + string.Join(", ", byModel.Select(kv => $"{kv.Key}: {kv.Value}"));
+        if (successScores.Count > 0)
+        {
+            summary.StatsBySuccess = $"Success scores: min {successScores.Min()}, max {successScores.Max()}, avg {successScores.Average():F1}";
+        }
+    }
+
+    private void BuildUnifiedSummaryAndIndex(UnifiedSessionLog log, JsonLogSummary summary)
+    {
+        summary.SearchIndex = new List<SearchableEntry>();
+        var entries = log.Entries;
+        
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var e = entries[i];
+            var display = (e.QueryText ?? "").Trim(); // Updated field name
+            if (display.Length > 60) display = display.Substring(0, 57) + "...";
+            
+            var searchText = string.Join(" ", 
+                e.RequestId ?? "", 
+                e.QueryText ?? "",  // Updated field name
+                e.QueryTitle ?? "", // Updated field name
+                e.Model ?? "", 
+                e.Timestamp?.ToString() ?? "",
+                e.Status ?? "");
+
+            summary.SearchIndex.Add(new SearchableEntry
+            {
+                RequestId = e.RequestId ?? "",
+                DisplayText = string.IsNullOrEmpty(display) ? $"Entry {i + 1}" : display,
+                Timestamp = e.Timestamp?.ToString("o") ?? "",
+                Model = e.Model ?? "",
+                EntryIndex = i,
+                SourcePath = $"entries[{i}]", // Matches Unified Model structure
+                SearchText = searchText
+            });
+        }
+        SearchableEntries = new ObservableCollection<SearchableEntry>(summary.SearchIndex);
+    }
+
+    private void BuildJsonTree(JsonNode? node, JsonTreeNode parent, string? pathPrefix)
     {
         if (node == null)
         {
@@ -418,18 +725,17 @@ public partial class MainWindowViewModel : ViewModelBase
             foreach (var property in jsonObj)
             {
                 string type = property.Value?.GetType().Name ?? "null";
-                // Simplify type name
                 if (property.Value is JsonArray) type = "Array";
                 else if (property.Value is JsonObject) type = "Object";
                 else if (property.Value is JsonValue) type = "Value";
 
-                var child = new JsonTreeNode(property.Key, "", type);
-                // Expand if it's the root's direct children or simple
+                var childKey = property.Key;
+                var childPath = string.IsNullOrEmpty(pathPrefix) ? childKey : pathPrefix + "." + childKey;
+                var child = new JsonTreeNode(childKey, "", type);
                 if (parent.Name == "Root") child.IsExpanded = true;
 
-                BuildJsonTree(property.Value, child);
-                
-                // If value is simple, set it
+                BuildJsonTree(property.Value, child, childPath);
+
                 if (property.Value is JsonValue val)
                 {
                     child.Value = val.ToString();
@@ -440,28 +746,90 @@ public partial class MainWindowViewModel : ViewModelBase
         }
         else if (node is JsonArray jsonArray)
         {
-            int index = 0;
-            foreach (var item in jsonArray)
+            IEnumerable<JsonNode?> items = jsonArray;
+            
+            // Sort requests/entries by timestamp descending if applicable
+            bool isSorted = false;
+            if (parent.Name.Equals("requests", StringComparison.OrdinalIgnoreCase) || 
+                parent.Name.Equals("entries", StringComparison.OrdinalIgnoreCase))
             {
-                var child = new JsonTreeNode($"[{index}]", "", "Item");
+                items = jsonArray.OrderByDescending(n => {
+                     if (n is JsonObject obj)
+                     {
+                         if (obj.TryGetPropertyValue("timestamp", out var tsNode) && tsNode is JsonValue tsVal)
+                         {
+                             if (tsVal.TryGetValue(out DateTime dt)) return dt;
+                             if (tsVal.TryGetValue(out string? s) && DateTime.TryParse(s, out var dt2)) return dt2;
+                             
+                             // Try numeric timestamp (Unix seconds or milliseconds)
+                             if (tsVal.TryGetValue(out long tsLong))
+                             {
+                                 // Assume milliseconds if large, seconds if small
+                                 // 2020-01-01 is ~1.5 billion seconds or 1.5 trillion ms
+                                 if (tsLong > 1000000000000) return DateTimeOffset.FromUnixTimeMilliseconds(tsLong).UtcDateTime;
+                                 return DateTimeOffset.FromUnixTimeSeconds(tsLong).UtcDateTime;
+                             }
+                             // Try parsing string as long
+                             if (tsVal.TryGetValue(out string? sLong) && long.TryParse(sLong, out var tsLong2))
+                             {
+                                 if (tsLong2 > 1000000000000) return DateTimeOffset.FromUnixTimeMilliseconds(tsLong2).UtcDateTime;
+                                 return DateTimeOffset.FromUnixTimeSeconds(tsLong2).UtcDateTime;
+                             }
+                         }
+                     }
+                     return DateTime.MinValue;
+                }).ToList();
+                isSorted = true;
+            }
+
+            int index = 0;
+            foreach (var item in items)
+            {
+                var itemPath = pathPrefix + "[" + index + "]";
+                var child = (pathPrefix == "requests" || pathPrefix == "entries")
+                    ? new JsonTreeNode($"[{index}]", "", "Item", itemPath)
+                    : new JsonTreeNode($"[{index}]", "", "Item");
                 
-                // Peek at item to find a preview text
+                string timestampPrefix = "";
+                if (item is JsonObject objTS && objTS.TryGetPropertyValue("timestamp", out var tsNode))
+                {
+                    // Format timestamp nicely if possible
+                    string tsStr = tsNode?.ToString() ?? "";
+                    if (tsNode is JsonValue tsVal)
+                    {
+                         if (tsVal.TryGetValue(out DateTime dt)) tsStr = dt.ToString("MM/dd HH:mm");
+                         else if (tsVal.TryGetValue(out long l)) 
+                         {
+                             // Try to format unix time
+                             try {
+                                 if (l > 1000000000000) tsStr = DateTimeOffset.FromUnixTimeMilliseconds(l).LocalDateTime.ToString("MM/dd HH:mm");
+                                 else tsStr = DateTimeOffset.FromUnixTimeSeconds(l).LocalDateTime.ToString("MM/dd HH:mm");
+                             } catch {}
+                         }
+                    }
+                    timestampPrefix = $"[{tsStr}] ";
+                }
+
                 if (item is JsonObject objItem)
                 {
-                    // Find first string property that is not empty
                     foreach (var prop in objItem)
                     {
                         if (prop.Value is JsonValue propVal && propVal.TryGetValue(out string? text) && !string.IsNullOrEmpty(text))
                         {
-                            // Truncate if too long
                             if (text.Length > 50) text = text.Substring(0, 47) + "...";
-                            child.Value = text;
+                            child.Value = timestampPrefix + text;
                             break;
                         }
                     }
                 }
+                
+                // If no text found but we have timestamp, show it
+                if (string.IsNullOrEmpty(child.Value) && !string.IsNullOrEmpty(timestampPrefix))
+                {
+                    child.Value = timestampPrefix.Trim();
+                }
 
-                BuildJsonTree(item, child);
+                BuildJsonTree(item, child, itemPath);
                 if (item is JsonValue val)
                 {
                     child.Value = val.ToString();
@@ -470,23 +838,20 @@ public partial class MainWindowViewModel : ViewModelBase
                 index++;
             }
         }
-        else if (node is JsonValue jsonValue)
-        {
-            // Already handled in parent loop usually, but if root is value
-            // But we don't add to parent here, we assume BuildJsonTree populates children of parent
-            // But for Value types, they don't have children.
-        }
     }
 
     private void InitializeTree()
     {
         Nodes.Clear();
-        if (!Directory.Exists(TargetPath))
+        string resolvedPath = GetResolvedTargetPath();
+        if (!Directory.Exists(resolvedPath))
         {
+            SetStatus($"Directory not found: {resolvedPath}");
             return;
         }
 
-        var root = new FileNode(TargetPath, true);
+        SetStatus($"Loaded: {resolvedPath}");
+        var root = new FileNode(resolvedPath, true);
         LoadChildren(root);
         Nodes.Add(root);
 
@@ -533,9 +898,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void SetupWatcher()
     {
-        if (!Directory.Exists(TargetPath)) return;
+        string resolvedPath = GetResolvedTargetPath();
+        if (!Directory.Exists(resolvedPath)) return;
 
-        _watcher = new FileSystemWatcher(TargetPath);
+        _watcher = new FileSystemWatcher(resolvedPath);
         _watcher.IncludeSubdirectories = true;
         _watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite;
         _watcher.Filter = "*.*";

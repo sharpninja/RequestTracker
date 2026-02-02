@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>WebView.Avalonia.Windows</id>
+    <version>11.0.0.1</version>
+    <title>WebView.Avalonia.Windows</title>
+    <authors>MicroSugarDeveloperOrg</authors>
+    <license type="expression">MIT</license>
+    <licenseUrl>https://licenses.nuget.org/MIT</licenseUrl>
+    <icon>webview@avalonia-logo.png</icon>
+    <readme>README.md</readme>
+    <projectUrl>https://github.com/MicroSugarDeveloperOrg/Avalonia.WebView</projectUrl>
+    <description>This repository is a set of controls that will help you add webview control.</description>
+    <tags>webview for avaloniaui</tags>
+    <repository type="git" url="https://github.com/MicroSugarDeveloperOrg/Avalonia.WebView" commit="8ae939c52baa04af73d5913f1b2c107ab8a92735" />
+    <dependencies>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="Avalonia" version="11.0.0" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Bcl.AsyncInterfaces" version="7.0.0" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.CSharp" version="4.7.0" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Extensions.FileProviders.Physical" version="7.0.0" exclude="Build,Analyzers" />
+        <dependency id="System.Numerics.Vectors" version="4.5.0" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>
