@@ -1,0 +1,7 @@
+bin/
+obj/
+.vs/
+*.user
+RequestTracker.slnx
+stdout*.log
+stderr*.log

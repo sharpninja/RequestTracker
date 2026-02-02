@@ -1,0 +1,78 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RequestTracker.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:wv="clr-namespace:AvaloniaWebView;assembly=Avalonia.WebView"
+        xmlns:models="using:RequestTracker.Models"
+        xmlns:jsonModels="using:RequestTracker.Models.Json"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="RequestTracker.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="RequestTracker">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid ColumnDefinitions="300, 4, *">
+        <Grid Grid.Column="0" RowDefinitions="*, 4, 150">
+            <TreeView Grid.Row="0" ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}">
+                <TreeView.ItemTemplate>
+                    <TreeDataTemplate ItemsSource="{Binding Children}" DataType="models:FileNode">
+                        <TextBlock Text="{Binding Name}"/>
+                    </TreeDataTemplate>
+                </TreeView.ItemTemplate>
+                <TreeView.ItemContainerTheme>
+                    <ControlTheme TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}" x:DataType="models:FileNode">
+                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                    </ControlTheme>
+                </TreeView.ItemContainerTheme>
+            </TreeView>
+            <GridSplitter Grid.Row="1" ResizeDirection="Rows" Background="LightGray"/>
+            <Border Grid.Row="2" BorderBrush="Gray" BorderThickness="0,1,0,0">
+                <ListBox ItemsSource="{Binding ChangeLog}" Background="#f8f8f8"/>
+            </Border>
+        </Grid>
+        
+        <GridSplitter Grid.Column="1" ResizeDirection="Columns" Background="LightGray"/>
+
+        <Grid Grid.Column="2" RowDefinitions="Auto, *, Auto">
+             <!-- Navigation Toolbar -->
+             <Grid Grid.Row="0" ColumnDefinitions="Auto, Auto, Auto, *" Margin="5">
+                <Button Grid.Column="0" Content="&lt;" Command="{Binding NavigateBackCommand}" Margin="0,0,5,0" Width="30"/>
+                <Button Grid.Column="1" Content="&gt;" Command="{Binding NavigateForwardCommand}" Margin="0,0,5,0" Width="30"/>
+                <Button Grid.Column="2" Content="R" Command="{Binding RefreshCommand}" Margin="0,0,5,0" Width="30" ToolTip.Tip="Refresh"/>
+                <TextBox Grid.Column="3" Text="{Binding SelectedNode.Path, Mode=OneWay}" IsReadOnly="True" VerticalContentAlignment="Center"/>
+             </Grid>
+             
+             <!-- Markdown View -->
+             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsMarkdownVisible}">
+                <wv:WebView Url="{Binding HtmlSource}" NavigationStarting="OnNavigationStarting"/>
+             </Border>
+
+             <!-- JSON Tree View -->
+             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsJsonVisible}">
+                <TreeView ItemsSource="{Binding JsonTree}">
+                    <TreeView.ItemTemplate>
+                        <TreeDataTemplate ItemsSource="{Binding Children}" DataType="jsonModels:JsonTreeNode">
+                            <StackPanel Orientation="Horizontal" Spacing="5" Background="Transparent" DoubleTapped="OnJsonNodeDoubleTapped">
+                                <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#007acc"/>
+                                <TextBlock Text=":" Foreground="Gray"/>
+                                <TextBlock Text="{Binding Value}" Foreground="#ce9178"/>
+                                <TextBlock Text="{Binding Type}" Foreground="Gray" FontStyle="Italic" FontSize="10" VerticalAlignment="Center" Margin="5,0,0,0"/>
+                            </StackPanel>
+                        </TreeDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
+             </Border>
+
+             <!-- Status Bar -->
+             <Border Grid.Row="2" Background="#007acc" Padding="5">
+                 <TextBlock Text="{Binding StatusMessage}" Foreground="White" FontWeight="Bold"/>
+             </Border>
+        </Grid>
+    </Grid>
+
+</Window>
