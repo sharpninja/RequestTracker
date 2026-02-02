@@ -76,6 +76,12 @@ namespace RequestTracker.Models.Json
         [JsonPropertyName("response")]
         public object Response { get; set; } // Complex object
 
+        [JsonPropertyName("interpretation")]
+        public object Interpretation { get; set; }
+
+        [JsonPropertyName("actions")]
+        public object Actions { get; set; }
+
         [JsonPropertyName("cost")]
         public CostInfo Cost { get; set; }
     }

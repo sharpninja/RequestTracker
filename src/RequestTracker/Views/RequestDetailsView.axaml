@@ -3,10 +3,15 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:models="clr-namespace:RequestTracker.Models.Json"
+             xmlns:conv="clr-namespace:RequestTracker.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="RequestTracker.Views.RequestDetailsView"
              x:DataType="models:UnifiedRequestEntry">
-  
+
+  <UserControl.Resources>
+      <conv:ObjectToJsonConverter x:Key="ObjectToJson"/>
+  </UserControl.Resources>
+
   <ScrollViewer>
     <StackPanel Spacing="10" Margin="10">
       <!-- Header -->
@@ -61,6 +66,35 @@
         <SelectableTextBlock Text="{Binding Response}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
       </Border>
 
+      <!-- Interpretation (if present) -->
+      <StackPanel IsVisible="{Binding Interpretation, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+          <TextBlock Text="Interpretation" FontWeight="SemiBold" Margin="0,10,0,0"/>
+          <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#F0F8FF">
+            <SelectableTextBlock Text="{Binding Interpretation}" TextWrapping="Wrap" FontFamily="Segoe UI, Sans-Serif" Foreground="Black" />
+          </Border>
+      </StackPanel>
+
+      <!-- Actions Grid (if present) -->
+      <StackPanel IsVisible="{Binding HasActions}">
+          <TextBlock Text="Actions" FontWeight="SemiBold" Margin="0,10,0,0"/>
+          <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Background="White">
+              <DataGrid ItemsSource="{Binding Actions}" AutoGenerateColumns="False" IsReadOnly="True" GridLinesVisibility="All" BorderThickness="0">
+                  <DataGrid.Columns>
+                      <DataGridTextColumn Header="#" Binding="{Binding Order}" Width="40"/>
+                      <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="90"/>
+                      <DataGridTemplateColumn Header="Description" Width="*">
+                          <DataGridTemplateColumn.CellTemplate>
+                              <DataTemplate>
+                                  <TextBlock Text="{Binding Description}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5"/>
+                              </DataTemplate>
+                          </DataGridTemplateColumn.CellTemplate>
+                      </DataGridTemplateColumn>
+                      <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80"/>
+                  </DataGrid.Columns>
+              </DataGrid>
+          </Border>
+      </StackPanel>
+
       <!-- Context -->
       <Expander Header="Context">
         <ItemsControl ItemsSource="{Binding ContextList}">
@@ -73,7 +107,7 @@
       </Expander>
 
       <!-- Tags/Notes -->
-      <Expander Header="Tags &amp; Notes">
+      <Expander Header="Tags &amp; Notes" IsExpanded="True">
         <StackPanel Spacing="5">
             <SelectableTextBlock Text="{Binding FailureNote, StringFormat='Failure Note: {0}'}" 
                        IsVisible="{Binding FailureNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" 
@@ -82,18 +116,24 @@
             <ItemsControl ItemsSource="{Binding Tags}">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                  <WrapPanel Orientation="Horizontal" />
+                  <StackPanel Spacing="5" />
                 </ItemsPanelTemplate>
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                   <Border CornerRadius="10" Background="#E0E0E0" Padding="8,2" Margin="0,0,5,5">
-                     <SelectableTextBlock Text="{Binding}" FontSize="11" Foreground="Black"/>
-                   </Border>
+                   <SelectableTextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,2"/>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
         </StackPanel>
+      </Expander>
+
+      <!-- Original JSON -->
+      <Expander Header="Original JSON">
+          <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
+            <SelectableTextBlock Text="{Binding OriginalEntry, Converter={StaticResource ObjectToJson}}" 
+                               TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
+          </Border>
       </Expander>
 
     </StackPanel>

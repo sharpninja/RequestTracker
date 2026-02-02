@@ -35,7 +35,7 @@ public partial class MainWindow : Window
 
         this.SizeChanged += OnWindowSizeChanged;
         this.PositionChanged += OnWindowPositionChanged;
-        this.Closed += OnWindowClosed;
+        this.Closing += OnWindowClosing;
         this.Opened += OnWindowOpened;
         this.GetObservable(WindowStateProperty).Subscribe(new WindowStateObserver(this));
     }
@@ -64,7 +64,10 @@ public partial class MainWindow : Window
             // Only apply position if valid (non-negative, though negative is valid for multi-monitor, 
             // usually 0,0 is safe default if not set)
             // But we'll trust the default (100,100) or saved value
-            this.Position = new PixelPoint((int)_layoutSettings.WindowX, (int)_layoutSettings.WindowY);
+            if (_layoutSettings.WindowX != 0 || _layoutSettings.WindowY != 0) 
+            {
+                this.Position = new PixelPoint((int)_layoutSettings.WindowX, (int)_layoutSettings.WindowY);
+            }
             
             this.WindowState = _layoutSettings.WindowState;
         }
@@ -76,6 +79,19 @@ public partial class MainWindow : Window
 
     private async void OnWindowOpened(object? sender, EventArgs e)
     {
+        // Force the saved position again after opening, as some platforms/WMs 
+        // ignore initial position set in constructor or override it during show
+        if (_layoutSettings.WindowX != 0 || _layoutSettings.WindowY != 0)
+        {
+            // Small delay to ensure window manager has finished initial placement
+            // Not ideal but often necessary for position restoration reliability
+             await Task.Delay(50);
+             if (WindowState == WindowState.Normal)
+             {
+                 this.Position = new PixelPoint((int)_layoutSettings.WindowX, (int)_layoutSettings.WindowY);
+             }
+        }
+
         // Bring window to front so it's visible
         Activate();
 
@@ -135,11 +151,21 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnWindowClosed(object? sender, EventArgs e)
+    private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
         if (_wasPortrait.HasValue)
             SaveCurrentLayoutToSettings(_wasPortrait.Value);
-        SaveWindowStateToSettings();
+        
+        // Save final state and position on closing
+        if (WindowState == WindowState.Normal)
+        {
+            _layoutSettings.WindowWidth = Width;
+            _layoutSettings.WindowHeight = Height;
+            _layoutSettings.WindowX = Position.X;
+            _layoutSettings.WindowY = Position.Y;
+        }
+        _layoutSettings.WindowState = WindowState;
+        
         SaveSettings();
     }
 
