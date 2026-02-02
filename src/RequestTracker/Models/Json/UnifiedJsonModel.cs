@@ -1,24 +1,27 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Text.Json;
 
 namespace RequestTracker.Models.Json
 {
     public class UnifiedSessionLog
     {
-        public string SourceType { get; set; } // "Copilot" or "Cursor"
-        public string SessionId { get; set; }
-        public string Title { get; set; } // Description (Cursor) or Workspace/Project (Copilot)
-        public string Model { get; set; } // Default Model for the session (if any)
+        public string SourceType { get; set; } = "";
+        public string SessionId { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Model { get; set; } = "";
         public DateTime? Started { get; set; }
         public DateTime? LastUpdated { get; set; }
-        public string Status { get; set; }
-        
+        public string Status { get; set; } = "";
+
         // Unified Stats
         public int EntryCount { get; set; }
         public int TotalTokens { get; set; }
-        
+
         public WorkspaceInfo? Workspace { get; set; }
-        
+
         public List<UnifiedRequestEntry> Entries { get; set; } = new();
 
         // Specifics retained for fidelity
@@ -28,47 +31,50 @@ namespace RequestTracker.Models.Json
 
     public class UnifiedRequestEntry
     {
-        public string RequestId { get; set; }
+        public string RequestId { get; set; } = "";
         public DateTime? Timestamp { get; set; }
-        public string Model { get; set; }
-        public string ModelProvider { get; set; } // Copilot has specific field
-        
+        public string Model { get; set; } = "";
+        public string ModelProvider { get; set; } = "";
+
         // Unified Query/Response
-        public string QueryText { get; set; } // UserRequest / ExactRequest
-        public string QueryTitle { get; set; } // Title/Slug / ExactRequestNote
-        public string Response { get; set; } // Unified string response
-        
+        public string QueryText { get; set; } = "";
+        public string QueryTitle { get; set; } = "";
+        public string Response { get; set; } = "";
+
         // Unified Context
-        public List<string> ContextList { get; set; } = new(); // ContextApplied / Context (if list)
-        public object RawContext { get; set; } // Original Context object
-        
+        public List<string> ContextList { get; set; } = new();
+        public object? RawContext { get; set; }
+
         // Unified Metrics
         public int TokenCount { get; set; }
         public bool IsPremium { get; set; }
-        public double? Score { get; set; } // Successfulness Score
-        public string Status { get; set; } // Added Status back
-        
+        public double? Score { get; set; }
+        public string Status { get; set; } = "";
+
         // Metadata / Tags
-        public List<string> Tags { get; set; } = new(); // Interpretation, ActionsTaken
-        public string FailureNote { get; set; } // PriorFailureNote
-        public string Interpretation { get; set; } // Explicit Interpretation Text
-        
+        public List<string> Tags { get; set; } = new();
+        public string FailureNote { get; set; } = "";
+        public string Interpretation { get; set; } = "";
+
         // Structured Actions (for Grid)
-        public List<UnifiedAction> Actions { get; set; } = new();
+        public ObservableCollection<UnifiedAction> Actions { get; set; } = new ObservableCollection<UnifiedAction>();
 
         public bool HasActions => Actions?.Count > 0;
 
         // Original Source Object (for JSON viewer)
-        public object OriginalEntry { get; set; }
+        public object? OriginalEntry { get; set; }
     }
 
     public class UnifiedAction
     {
         public int Order { get; set; }
-        public string Description { get; set; }
-        public string Type { get; set; }
-        public string Status { get; set; }
-        public string FilePath { get; set; }
+        public string Description { get; set; } = "";
+        public string Type { get; set; } = "";
+        public string Status { get; set; } = "";
+        public string FilePath { get; set; } = "";
+
+        /// <summary>Single line for list display: Order | Type | Description | Status | FilePath.</summary>
+        public string PipeDelimitedLine => $"{Order} | {Type} | {Description} | {Status} | {FilePath}";
     }
 
     public static class UnifiedLogFactory
@@ -83,7 +89,7 @@ namespace RequestTracker.Models.Json
                 LastUpdated = log.LastUpdated ?? log.Completed,
                 Status = log.Status,
                 EntryCount = log.Requests?.Count ?? 0,
-                
+
                 Title = log.Workspace?.Project ?? log.Workspace?.Repository ?? "Copilot Session",
                 Model = log.Model, // Copilot has session-level model
                 Workspace = log.Workspace,
@@ -96,31 +102,31 @@ namespace RequestTracker.Models.Json
                 foreach (var r in log.Requests)
                 {
                     int tokens = ParseTokens(r.Cost?.Tokens);
-                    
+
                     var entry = new UnifiedRequestEntry
                     {
                         RequestId = r.RequestId,
                         Timestamp = r.Timestamp,
                         Model = r.Model,
                         ModelProvider = r.ModelProvider,
-                        
+
                         QueryText = r.UserRequest,
                         QueryTitle = !string.IsNullOrEmpty(r.Title) ? r.Title : r.Slug,
                         Response = ParseCopilotResponse(r.Response, r.Interpretation, r.Actions),
                         Status = "Completed",
-                        
+
                         ContextList = ParseContextList(r.Context),
                         RawContext = r.Context,
-                        
+
                         Interpretation = ExtractInterpretation(r.Interpretation),
-                        Actions = ParseActions(r.Actions),
+                        Actions = new ObservableCollection<UnifiedAction>(ParseActionsForCopilot(r.Actions, r.RequestId)),
 
                         TokenCount = tokens,
                         IsPremium = ParseBool(r.Cost?.PremiumRequests),
-                        
+
                         OriginalEntry = r
                     };
-                    
+
                     if (r.RequestNumber.HasValue) entry.Tags.Add($"Request #{r.RequestNumber}");
                     if (!string.IsNullOrEmpty(r.Slug) && r.Slug != r.Title) entry.Tags.Add($"Slug: {r.Slug}");
 
@@ -156,7 +162,7 @@ namespace RequestTracker.Models.Json
             {
                 u.EntryCount = log.Entries.Count;
                 int totalTokens = 0;
-                
+
                 foreach (var r in log.Entries)
                 {
                     DateTime? ts = ParseCursorTimestamp(r.Timestamp);
@@ -168,24 +174,25 @@ namespace RequestTracker.Models.Json
                         RequestId = r.RequestId,
                         Timestamp = ts,
                         Model = r.Model,
-                        
+
                         QueryText = r.ExactRequest,
                         QueryTitle = r.ExactRequestNote,
                         Response = ParseCursorResponse(r.Response),
                         Status = r.Successfulness?.Score != null ? "Scored" : "Unknown",
-                        
+
                         ContextList = r.ContextApplied ?? new List<string>(),
 
-                        Interpretation = r.Interpretation != null ? string.Join("\n", r.Interpretation) : null,
-                        
+                        Interpretation = r.Interpretation != null ? string.Join("\n", r.Interpretation) : "",
+                        Actions = new ObservableCollection<UnifiedAction>(GetCursorEntryActions(r.ActionsTaken, r.Actions)),
+
                         TokenCount = tokens,
                         IsPremium = ParseBool(r.Cost?.PremiumRequests),
                         Score = r.Successfulness?.Score,
                         FailureNote = r.PriorFailureNote,
-                        
+
                         OriginalEntry = r
                     };
-                    
+
                     if (r.ActionsTaken != null) entry.Tags.AddRange(r.ActionsTaken);
                     if (r.Successfulness?.Notes != null) entry.Tags.AddRange(r.Successfulness.Notes);
 
@@ -195,12 +202,84 @@ namespace RequestTracker.Models.Json
             }
             return u;
         }
-        
+
+        /// <summary>
+        /// Parses actions for a Copilot request with detailed logging.
+        /// </summary>
+        private static List<UnifiedAction> ParseActionsForCopilot(object? actionsObj, string? requestId)
+        {
+            const string prefix = "[Copilot Actions]";
+            requestId ??= "(null)";
+
+            if (actionsObj == null)
+            {
+                Console.WriteLine($"{prefix} RequestId={requestId}: input is null, returning 0 actions.");
+                return new List<UnifiedAction>();
+            }
+
+            if (actionsObj is JsonElement element)
+            {
+                Console.WriteLine($"{prefix} RequestId={requestId}: input type=JsonElement ValueKind={element.ValueKind}");
+                if (element.ValueKind == JsonValueKind.Array)
+                {
+                    int len = element.GetArrayLength();
+                    Console.WriteLine($"{prefix} RequestId={requestId}: array length={len}");
+                }
+                else
+                {
+                    Console.WriteLine($"{prefix} RequestId={requestId}: raw snippet={Truncate(element.ToString(), 200)}");
+                }
+
+                var list = new List<UnifiedAction>();
+                ParseActionsFromElement(element, list);
+
+                Console.WriteLine($"{prefix} RequestId={requestId}: parsed {list.Count} actions.");
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var a = list[i];
+                    Console.WriteLine($"{prefix}   [{i + 1}] Order={a.Order} Type={a.Type} Status={a.Status} FilePath={a.FilePath} Description={Truncate(a.Description ?? "", 80)}");
+                }
+                return list.OrderBy(x => x.Order).ToList();
+            }
+
+            if (actionsObj is string jsonString)
+            {
+                Console.WriteLine($"{prefix} RequestId={requestId}: input type=string length={jsonString?.Length ?? 0} snippet={Truncate(jsonString ?? "", 200)}");
+                var list = new List<UnifiedAction>();
+                try
+                {
+                    using var doc = JsonDocument.Parse(jsonString ?? "[]");
+                    ParseActionsFromElement(doc.RootElement, list);
+                    Console.WriteLine($"{prefix} RequestId={requestId}: parsed {list.Count} actions from string JSON.");
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var a = list[i];
+                        Console.WriteLine($"{prefix}   [{i + 1}] Order={a.Order} Type={a.Type} Status={a.Status} FilePath={a.FilePath} Description={Truncate(a.Description ?? "", 80)}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"{prefix} RequestId={requestId}: failed to parse actions string: {ex.Message}");
+                }
+                return list.OrderBy(a => a.Order).ToList();
+            }
+
+            Console.WriteLine($"{prefix} RequestId={requestId}: input type={actionsObj.GetType().Name} (unhandled), returning 0 actions.");
+            return new List<UnifiedAction>();
+        }
+
+        private static string Truncate(string value, int maxLength)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            if (value.Length <= maxLength) return value;
+            return value.Substring(0, maxLength) + "...";
+        }
+
         private static List<UnifiedAction> ParseActions(object? actionsObj)
         {
             var list = new List<UnifiedAction>();
             if (actionsObj == null) return list;
-            
+
             if (actionsObj is System.Text.Json.JsonElement element)
             {
                 ParseActionsFromElement(element, list);
@@ -214,32 +293,128 @@ namespace RequestTracker.Models.Json
                      System.Diagnostics.Debug.WriteLine($"Failed to parse actions JSON: {ex.Message}");
                  }
             }
+            return list.OrderBy(a => a.Order).ToList();
+        }
+
+        /// <summary>
+        /// Gets actions for a Cursor entry: primary source is actionsTaken (list of strings), fallback is structured actions.
+        /// </summary>
+        private static List<UnifiedAction> GetCursorEntryActions(List<string>? actionsTaken, object? actions)
+        {
+            var fromTaken = ActionsFromActionsTaken(actionsTaken);
+            if (fromTaken != null && fromTaken.Count > 0) return fromTaken;
+            return ParseActions(actions);
+        }
+
+        /// <summary>
+        /// Converts Cursor's actionsTaken (list of strings) to unified actions. Returns null if list is null/empty.
+        /// </summary>
+        private static List<UnifiedAction>? ActionsFromActionsTaken(List<string>? actionsTaken)
+        {
+            if (actionsTaken == null || actionsTaken.Count == 0) return null;
+            var list = new List<UnifiedAction>();
+            for (int i = 0; i < actionsTaken.Count; i++)
+                list.Add(new UnifiedAction { Order = i + 1, Description = actionsTaken[i] ?? "" });
             return list;
+        }
+
+        /// <summary>
+        /// Parses actions from a raw JSON entry element (e.g. one item from entries[]).
+        /// Cursor logs use "actionsTaken" or "actions_taken" (array of strings); also looks for "actions"/"Actions" (structured).
+        /// </summary>
+        public static List<UnifiedAction> ParseActionsFromEntryElement(System.Text.Json.JsonElement entryElement)
+        {
+            var list = new List<UnifiedAction>();
+            if (entryElement.ValueKind != System.Text.Json.JsonValueKind.Object) return list;
+            // Cursor: actionsTaken / actions_taken is the primary node (array of strings)
+            if (TryGetActionsTakenArray(entryElement, out var actionsTakenProp))
+            {
+                int idx = 1;
+                foreach (var item in actionsTakenProp.EnumerateArray())
+                    list.Add(new UnifiedAction { Order = idx++, Description = GetElementString(item) });
+                return list.OrderBy(a => a.Order).ToList();
+            }
+            // Fallback: structured "actions" or "Actions"
+            if (TryGetPropertyCI(entryElement, "actions", out var actionsProp))
+                ParseActionsFromElement(actionsProp, list);
+            if (list.Count > 0) return list.OrderBy(a => a.Order).ToList();
+            // Last resort: scan all properties for any array that looks like actions (array of strings or array of objects)
+            foreach (var prop in entryElement.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Array) continue;
+                var arr = prop.Value;
+                if (arr.GetArrayLength() == 0) continue;
+                using var enumerator = arr.EnumerateArray();
+                if (!enumerator.MoveNext()) continue;
+                var first = enumerator.Current;
+                if (first.ValueKind == System.Text.Json.JsonValueKind.String || first.ValueKind == System.Text.Json.JsonValueKind.Number)
+                {
+                    int idx = 1;
+                    foreach (var item in arr.EnumerateArray())
+                        list.Add(new UnifiedAction { Order = idx++, Description = GetElementString(item) });
+                    return list.OrderBy(a => a.Order).ToList();
+                }
+                if (first.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    ParseActionsFromElement(arr, list);
+                    if (list.Count > 0) return list.OrderBy(a => a.Order).ToList();
+                }
+            }
+            return list.OrderBy(a => a.Order).ToList();
+        }
+
+        /// <summary>Tries to get the actions-taken array (cursor: "actionsTaken" or "actions_taken").</summary>
+        private static bool TryGetActionsTakenArray(System.Text.Json.JsonElement entryElement, out System.Text.Json.JsonElement arrayElement)
+        {
+            arrayElement = default;
+            foreach (var name in new[] { "actionsTaken", "actions_taken" })
+            {
+                if (TryGetPropertyCI(entryElement, name, out var prop) && prop.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    arrayElement = prop;
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static void ParseActionsFromElement(System.Text.Json.JsonElement arrElement, List<UnifiedAction> list)
         {
-            if (arrElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+            if (arrElement.ValueKind != System.Text.Json.JsonValueKind.Array) return;
+            int idx = 1;
+            foreach (var item in arrElement.EnumerateArray())
             {
-                int idx = 1;
-                foreach (var item in arrElement.EnumerateArray())
+                var action = new UnifiedAction();
+                // Array of strings/primitives: use value as description
+                if (item.ValueKind == System.Text.Json.JsonValueKind.String || item.ValueKind == System.Text.Json.JsonValueKind.Number)
                 {
-                    var action = new UnifiedAction();
-                    
-                    if (TryGetPropertyCI(item, "order", out var order) && order.ValueKind == System.Text.Json.JsonValueKind.Number) 
-                        action.Order = order.GetInt32();
-                    else 
-                        action.Order = idx++;
-                    
-                    if (TryGetPropertyCI(item, "description", out var desc)) action.Description = desc.ToString();
-                    if (TryGetPropertyCI(item, "type", out var type)) action.Type = type.ToString();
-                    if (TryGetPropertyCI(item, "status", out var status)) action.Status = status.ToString();
-                    if (TryGetPropertyCI(item, "filePath", out var fp)) action.FilePath = fp.ToString();
-                    else if (TryGetPropertyCI(item, "filePaths", out var fps)) action.FilePath = "Multiple files";
-                    
+                    action.Order = idx++;
+                    action.Description = GetElementString(item);
                     list.Add(action);
+                    continue;
                 }
+                if (TryGetPropertyCI(item, "order", out var order) && order.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    action.Order = order.GetInt32();
+                else
+                    action.Order = idx++;
+                if (TryGetPropertyCI(item, "description", out var desc)) action.Description = GetElementString(desc);
+                if (TryGetPropertyCI(item, "type", out var type)) action.Type = GetElementString(type);
+                if (TryGetPropertyCI(item, "status", out var status)) action.Status = GetElementString(status);
+                if (TryGetPropertyCI(item, "filePath", out var fp)) action.FilePath = GetElementString(fp);
+                else if (TryGetPropertyCI(item, "file_path", out var fp2)) action.FilePath = GetElementString(fp2);
+                else if (TryGetPropertyCI(item, "filePaths", out var fps)) action.FilePath = "Multiple files";
+                list.Add(action);
             }
+        }
+
+        private static string GetElementString(System.Text.Json.JsonElement element)
+        {
+            if (element.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var s = element.GetString();
+                return s ?? "";
+            }
+            return element.ToString().Trim('"');
         }
 
         private static bool TryGetPropertyCI(System.Text.Json.JsonElement element, string propertyName, out System.Text.Json.JsonElement value)
@@ -248,7 +423,7 @@ namespace RequestTracker.Models.Json
             if (element.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
 
             if (element.TryGetProperty(propertyName, out value)) return true;
-            
+
             foreach (var prop in element.EnumerateObject())
             {
                 if (string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
@@ -266,7 +441,7 @@ namespace RequestTracker.Models.Json
             if (tokenObj is int i) return i;
             if (tokenObj is long l) return (int)l;
             if (tokenObj is double d) return (int)d;
-            if (tokenObj is System.Text.Json.JsonElement e) 
+            if (tokenObj is System.Text.Json.JsonElement e)
             {
                 if (e.ValueKind == System.Text.Json.JsonValueKind.Number && e.TryGetInt32(out var val)) return val;
                 if (e.ValueKind == System.Text.Json.JsonValueKind.String && int.TryParse(e.GetString(), out var val2)) return val2;
@@ -280,7 +455,7 @@ namespace RequestTracker.Models.Json
             if (obj == null) return false;
             if (obj is bool b) return b;
             if (obj is string s) return s.Equals("true", StringComparison.OrdinalIgnoreCase);
-             if (obj is System.Text.Json.JsonElement e) 
+             if (obj is System.Text.Json.JsonElement e)
              {
                  if (e.ValueKind == System.Text.Json.JsonValueKind.True) return true;
              }
@@ -291,7 +466,7 @@ namespace RequestTracker.Models.Json
         {
             if (string.IsNullOrEmpty(ts)) return null;
             if (DateTime.TryParse(ts, out var t)) return t;
-            if (long.TryParse(ts, out var l)) 
+            if (long.TryParse(ts, out var l))
             {
                  if (l > 1000000000000) return DateTimeOffset.FromUnixTimeMilliseconds(l).UtcDateTime;
                  return DateTimeOffset.FromUnixTimeSeconds(l).UtcDateTime;
@@ -301,19 +476,19 @@ namespace RequestTracker.Models.Json
 
         private static string ExtractInterpretation(object? interpretationObj)
         {
-             if (interpretationObj == null) return null;
-             
+             if (interpretationObj == null) return "";
+
              if (interpretationObj is System.Text.Json.JsonElement interp && interp.ValueKind == System.Text.Json.JsonValueKind.Object)
              {
                  var sb = new System.Text.StringBuilder();
-                 
+
                  // Summary
                  if (interp.TryGetProperty("summary", out var summary))
                  {
                      sb.AppendLine(summary.GetString());
                      sb.AppendLine();
                  }
-                 
+
                  // Requirements
                  if (interp.TryGetProperty("requirements", out var reqs) && reqs.ValueKind == System.Text.Json.JsonValueKind.Array)
                  {
@@ -335,7 +510,7 @@ namespace RequestTracker.Models.Json
                      }
                      sb.AppendLine();
                  }
-                 
+
                  // Key Decisions (from req-002)
                  if (interp.TryGetProperty("keyDecisions", out var decisions) && decisions.ValueKind == System.Text.Json.JsonValueKind.Array)
                  {
@@ -349,7 +524,7 @@ namespace RequestTracker.Models.Json
 
                  return sb.ToString().Trim();
              }
-             return interpretationObj.ToString();
+             return interpretationObj.ToString() ?? "";
         }
 
         private static string ParseCopilotResponse(object? responseObj, object? interpretationObj = null, object? actionsObj = null)
@@ -359,7 +534,7 @@ namespace RequestTracker.Models.Json
             {
                 string resp = "";
                 if (responseObj is string s) resp = s;
-                else if (responseObj is System.Text.Json.JsonElement e) 
+                else if (responseObj is System.Text.Json.JsonElement e)
                 {
                      if (e.ValueKind == System.Text.Json.JsonValueKind.Array)
                      {
@@ -370,7 +545,7 @@ namespace RequestTracker.Models.Json
                      else resp = e.ToString();
                 }
                 else resp = responseObj.ToString() ?? "";
-                
+
                 if (!string.IsNullOrWhiteSpace(resp)) return resp;
             }
 
@@ -378,7 +553,7 @@ namespace RequestTracker.Models.Json
             if (interpretationObj != null || actionsObj != null)
             {
                 var sb = new System.Text.StringBuilder();
-                
+
                 if (interpretationObj is System.Text.Json.JsonElement interp && interp.ValueKind == System.Text.Json.JsonValueKind.Object)
                 {
                     if (interp.TryGetProperty("summary", out var summary))
@@ -387,7 +562,7 @@ namespace RequestTracker.Models.Json
                         sb.AppendLine(summary.GetString());
                         sb.AppendLine();
                     }
-                    
+
                     if (interp.TryGetProperty("requirements", out var reqs) && reqs.ValueKind == System.Text.Json.JsonValueKind.Array)
                     {
                         sb.AppendLine("### Requirements");
@@ -407,14 +582,14 @@ namespace RequestTracker.Models.Json
                         string desc = "";
                         if (action.TryGetProperty("description", out var d)) desc = d.GetString() ?? "";
                         else desc = action.ToString();
-                        
+
                         if (action.TryGetProperty("order", out var order))
                             sb.AppendLine($"{order}. {desc}");
                         else
                             sb.AppendLine($"- {desc}");
                     }
                 }
-                
+
                 return sb.ToString();
             }
 
@@ -425,7 +600,7 @@ namespace RequestTracker.Models.Json
         {
             if (responseObj == null) return "";
             if (responseObj is string s) return s;
-            if (responseObj is System.Text.Json.JsonElement e) 
+            if (responseObj is System.Text.Json.JsonElement e)
             {
                 if (e.ValueKind == System.Text.Json.JsonValueKind.Array)
                 {

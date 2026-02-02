@@ -58,7 +58,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private ObservableCollection<JsonTreeNode> _jsonTree = new();
 
     [ObservableProperty]
-    private JsonLogSummary? _jsonLogSummary;
+    private JsonLogSummary _jsonLogSummary = new();
 
     [ObservableProperty]
     private ObservableCollection<SearchableEntry> _searchableEntries = new();
@@ -89,7 +89,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public bool IsWebViewPlaceholderVisible => !IsWebViewSupported;
 
     private string? _currentMarkdownPath;
-    
+
     // Navigation History
     private readonly Stack<FileNode> _backStack = new();
     private readonly Stack<FileNode> _forwardStack = new();
@@ -150,7 +150,7 @@ public partial class MainWindowViewModel : ViewModelBase
             _forwardStack.Push(SelectedNode);
             SelectedNode = _backStack.Pop();
             _isNavigatingHistory = false;
-            
+
             NavigateBackCommand.NotifyCanExecuteChanged();
             NavigateForwardCommand.NotifyCanExecuteChanged();
         }
@@ -185,10 +185,43 @@ public partial class MainWindowViewModel : ViewModelBase
              string tempFileName = $"{Path.GetFileNameWithoutExtension(SelectedNode.Path)}_{hash}.html";
              string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
              string tempPath = Path.Combine(tempDir, tempFileName);
-             
+
              if (File.Exists(tempPath)) File.Delete(tempPath);
-             
+
              GenerateAndNavigate(SelectedNode);
+        }
+    }
+
+    partial void OnSelectedUnifiedRequestChanged(UnifiedRequestEntry? value)
+    {
+        LogUnifiedEntryActionsForGrid(value);
+    }
+
+    /// <summary>
+    /// Detailed logging when the unified entry (and its Actions) are bound by the details grid.
+    /// </summary>
+    private static void LogUnifiedEntryActionsForGrid(UnifiedRequestEntry? entry)
+    {
+        const string prefix = "[Unified Grid Actions]";
+        if (entry == null)
+        {
+            Console.WriteLine($"{prefix} Bound entry is null; grid will show no actions.");
+            return;
+        }
+        string requestId = entry.RequestId ?? "(null)";
+        Console.WriteLine($"{prefix} Binding entry for details grid RequestId={requestId} HasActions={entry.HasActions}");
+        var actions = entry.Actions;
+        if (actions == null || actions.Count == 0)
+        {
+            Console.WriteLine($"{prefix}   Actions count=0 (grid will be empty/hidden).");
+            return;
+        }
+        Console.WriteLine($"{prefix}   Actions count={actions.Count}");
+        for (int i = 0; i < actions.Count; i++)
+        {
+            var a = actions[i];
+            string desc = string.IsNullOrEmpty(a.Description) ? "" : (a.Description.Length <= 80 ? a.Description : a.Description.Substring(0, 77) + "...");
+            Console.WriteLine($"{prefix}   [{i + 1}] Order={a.Order} Type={a.Type} Status={a.Status} FilePath={a.FilePath} Description={desc}");
         }
     }
 
@@ -218,7 +251,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             _backStack.Push(SelectedNode);
             _forwardStack.Clear();
-            
+
             NavigateBackCommand.NotifyCanExecuteChanged();
             NavigateForwardCommand.NotifyCanExecuteChanged();
         }
@@ -228,7 +261,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         Console.WriteLine($"Selected Node Changed: {value?.Path}");
         GenerateAndNavigate(value);
-        
+
         if (value != null)
         {
              ExpandToNode(Nodes, value);
@@ -252,7 +285,7 @@ public partial class MainWindowViewModel : ViewModelBase
             string path = url.LocalPath;
             if (path.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) return false;
 
-            if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || 
+            if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ||
                 path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
                 HandleNavigation(path);
@@ -266,21 +299,21 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         // Path might be the resolved path in the temp directory, e.g., C:\Users\...\Temp\RequestTracker_Cache\next.md
         // We need to resolve it relative to the _currentMarkdownPath
-        
+
         if (_currentMarkdownPath == null) return;
 
         string fileName = Path.GetFileName(path);
-        // Assuming relative links are just filenames or relative paths. 
+        // Assuming relative links are just filenames or relative paths.
         // If the browser resolved it to the temp dir, we just want the relative part.
         // But extracting the relative part from the temp path is hard if we don't know the temp root.
-        
+
         // Simple approach: Take the filename and look in the current markdown's directory.
         // Better approach: If the path contains "RequestTracker_Cache", strip it and the prefix.
-        
-        // Actually, pandoc generates relative links. 
+
+        // Actually, pandoc generates relative links.
         // If I am at "doc.html" in "temp/", and link is "sub/next.md", browser goes to "temp/sub/next.md".
         // I want "original_dir/sub/next.md".
-        
+
         string? currentDir = Path.GetDirectoryName(_currentMarkdownPath);
         if (currentDir == null) return;
 
@@ -288,48 +321,48 @@ public partial class MainWindowViewModel : ViewModelBase
         // The path coming from WebView might be absolute in temp dir
         // e.g. C:\Users\kingd\AppData\Local\Temp\RequestTracker_Cache\copilot\session-2026-02-02-073300\session-log.md
         // But we want to map it to E:\github\FunWasHad\docs\requests\copilot\session-2026-02-02-073300\session-log.md
-        
+
         // If the path contains "RequestTracker_Cache", we should try to extract the relative part
         // But since we flatten the cache (or do we?), wait, let's check GenerateAndNavigate.
         // We generate into tempDir directly: Path.Combine(tempDir, tempFileName);
-        // tempFileName is Name_Hash.html. 
+        // tempFileName is Name_Hash.html.
         // So all HTML files are in the root of RequestTracker_Cache.
-        
+
         // However, pandoc generated links might be relative.
         // If README.md links to "copilot/session.md", browser tries to go to "RequestTracker_Cache/copilot/session.md"
         // In that case, 'path' will be ".../RequestTracker_Cache/copilot/session.md"
-        
+
         string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
         if (path.StartsWith(tempDir, StringComparison.OrdinalIgnoreCase))
         {
              // It's inside our temp dir structure.
              // Get the relative path from tempDir
              string relativePath = Path.GetRelativePath(tempDir, path);
-             
+
              // Now combine with the root target path? Or current markdown's directory?
              // Since we don't replicate directory structure in temp (we flatten or hash), this is tricky.
              // But wait, if pandoc generates relative links, and the browser resolves them against the base URL (the temp html file),
              // then "copilot/session.md" becomes "temp/copilot/session.md".
-             
+
              // If we assume the link was relative to the markdown file, we should combine it with the markdown's directory.
-             
+
              string targetPath = Path.Combine(currentDir, relativePath);
-             
+
              // Normalize path
              targetPath = Path.GetFullPath(targetPath);
-             
+
              if (File.Exists(targetPath))
              {
                  SelectNodeByPath(targetPath);
                  return;
              }
         }
-        
+
         // Fallback: Try just the filename in current dir
         string targetPathSimple = Path.Combine(currentDir, fileName);
         if (File.Exists(targetPathSimple))
         {
-            SelectNodeByPath(targetPathSimple); 
+            SelectNodeByPath(targetPathSimple);
         }
         else
         {
@@ -357,7 +390,7 @@ public partial class MainWindowViewModel : ViewModelBase
         foreach (var node in nodes)
         {
             if (node == target) return;
-            
+
             if (ContainsNode(node, target))
             {
                 node.IsExpanded = true;
@@ -382,7 +415,7 @@ public partial class MainWindowViewModel : ViewModelBase
         foreach (var node in nodes)
         {
             if (node.Path.Equals(path, StringComparison.OrdinalIgnoreCase)) return node;
-            
+
             var found = FindNode(node.Children, path);
             if (found != null) return found;
         }
@@ -466,7 +499,7 @@ public partial class MainWindowViewModel : ViewModelBase
          string tempFileName = $"{Path.GetFileNameWithoutExtension(node.Path)}_{hash}.html";
          string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
          string tempPath = Path.Combine(tempDir, tempFileName);
-         
+
          Directory.CreateDirectory(tempDir);
 
          bool needsGeneration = true;
@@ -519,9 +552,9 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         StatusMessage = "Aggregating all JSON files...";
-        
+
         // Use a safe wrapper to catch background exceptions
-        Task.Run(async () => 
+        Task.Run(async () =>
         {
             try
             {
@@ -534,9 +567,9 @@ public partial class MainWindowViewModel : ViewModelBase
                     try
                     {
                         var text = await File.ReadAllTextAsync(file);
-                        
+
                         // Try Copilot first
-                        try 
+                        try
                         {
                             var copilotLog = JsonSerializer.Deserialize<CopilotSessionLog>(text, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (copilotLog?.Requests != null)
@@ -563,7 +596,7 @@ public partial class MainWindowViewModel : ViewModelBase
                         }
                         catch {}
                     }
-                    catch 
+                    catch
                     {
                         // Skip unreadable files
                     }
@@ -582,9 +615,9 @@ public partial class MainWindowViewModel : ViewModelBase
                     Entries = unifiedLogs.SelectMany(l => l.Entries).OrderByDescending(e => e.Timestamp).ToList(),
                     TotalTokens = unifiedLogs.Sum(l => l.TotalTokens)
                 };
-                
+
                 // Update UI on main thread
-                Dispatcher.UIThread.Post(() => 
+                Dispatcher.UIThread.Post(() =>
                 {
                     try
                     {
@@ -639,7 +672,7 @@ public partial class MainWindowViewModel : ViewModelBase
             string cssPath = Path.Combine(AppContext.BaseDirectory, "Assets", "styles.css");
             // If running from dotnet run, BaseDirectory might be bin/Debug/...
             // The Assets folder is in project root. We might need to copy it or look up.
-            
+
             // For development, let's try to find it in project source if not in bin
             if (!File.Exists(cssPath))
             {
@@ -660,7 +693,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
             string htmlContent = process.StandardOutput.ReadToEnd();
             process.WaitForExit();
-            
+
             File.WriteAllText(destPath, htmlContent);
             return true;
         }
@@ -678,7 +711,7 @@ public partial class MainWindowViewModel : ViewModelBase
             string jsonContent = File.ReadAllText(path);
             JsonTree.Clear();
             SearchableEntries.Clear();
-            JsonLogSummary = null;
+            JsonLogSummary = new JsonLogSummary();
 
             var jsonNode = JsonNode.Parse(jsonContent);
             string schemaType = "Unknown";
@@ -690,21 +723,42 @@ public partial class MainWindowViewModel : ViewModelBase
                 if (obj.ContainsKey("sessionId") && obj.ContainsKey("statistics"))
                 {
                     schemaType = "Copilot Session Log";
-                    var model = JsonSerializer.Deserialize<CopilotSessionLog>(jsonContent);
+                    var model = JsonSerializer.Deserialize<CopilotSessionLog>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     if (model != null)
                     {
                         BuildCopilotSummaryAndIndex(model, summary); // Keep for stats
                         unifiedLog = UnifiedLogFactory.Create(model);
                     }
                 }
-                else if (obj.ContainsKey("entries") && obj.ContainsKey("session"))
+                else if (HasKeyCI(obj, "entries") && HasKeyCI(obj, "session"))
                 {
                     schemaType = "Cursor Request Log";
-                    var model = JsonSerializer.Deserialize<CursorRequestLog>(jsonContent);
+                    var model = JsonSerializer.Deserialize<CursorRequestLog>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     if (model != null)
                     {
                         BuildCursorSummaryAndIndex(model, summary); // Keep for stats
                         unifiedLog = UnifiedLogFactory.Create(model);
+                        // Fallback: fill Actions from raw JSON when deserializer didn't populate them (e.g. alternate key casing)
+                        if (unifiedLog != null)
+                            FillActionsFromRawJson(jsonContent, unifiedLog);
+                    }
+                }
+                else if (IsSingleCursorRequest(obj))
+                {
+                    // Single-request file (e.g. request-001-logging-system.json): wrap as one-entry session so details + Actions show
+                    schemaType = "Cursor Request (single)";
+                    var singleEntry = JsonSerializer.Deserialize<CursorRequestEntry>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (singleEntry != null)
+                    {
+                        var syntheticLog = new CursorRequestLog
+                        {
+                            Session = "Single Request",
+                            Description = singleEntry.RequestId ?? "Request",
+                            Entries = new List<CursorRequestEntry> { singleEntry }
+                        };
+                        unifiedLog = UnifiedLogFactory.Create(syntheticLog);
+                        if (unifiedLog != null && unifiedLog.Entries.Count > 0 && unifiedLog.Entries[0].Actions.Count == 0)
+                            FillActionsFromSingleEntryJson(jsonContent, unifiedLog);
                     }
                 }
             }
@@ -714,29 +768,29 @@ public partial class MainWindowViewModel : ViewModelBase
                 // Force usage of Unified Model for Tree and Search Index
                 // This ensures the UI reflects the Unified Format as requested
                 schemaType = $"{unifiedLog.SourceType} (Unified)";
-                
+
                 // Rebuild Search Index based on Unified Log to ensure paths match the new tree (entries[i])
                 BuildUnifiedSummaryAndIndex(unifiedLog, summary);
-                
+
                 // Serialize Unified Log to JsonNode for the Tree
                 var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false };
                 var unifiedNode = JsonSerializer.SerializeToNode(unifiedLog, options);
-                
+
                 // Update Summary Header
                  summary.SummaryLines.Clear();
                  summary.SummaryLines.Add($"Type: {unifiedLog.SourceType}");
                  summary.SummaryLines.Add($"Session: {unifiedLog.SessionId}");
                  summary.SummaryLines.Add($"Entries: {unifiedLog.EntryCount}");
-                 if (!string.IsNullOrEmpty(unifiedLog.Model)) 
+                 if (!string.IsNullOrEmpty(unifiedLog.Model))
                      summary.SummaryLines.Add($"Model: {unifiedLog.Model}");
-                 if (unifiedLog.LastUpdated.HasValue) 
+                 if (unifiedLog.LastUpdated.HasValue)
                      summary.SummaryLines.Add($"Last Updated: {unifiedLog.LastUpdated}");
-                     
-                // Retain the rich stats from the specific parsers if available (StatsByModel, etc) 
+
+                // Retain the rich stats from the specific parsers if available (StatsByModel, etc)
                 // but prepend Unified info.
-            
+
                 JsonLogSummary = summary;
-                
+
                 var root = new JsonTreeNode("Root", schemaType, "Object");
                 root.IsExpanded = true;
                 BuildJsonTree(unifiedNode, root, null);
@@ -768,9 +822,86 @@ public partial class MainWindowViewModel : ViewModelBase
             JsonTree.Clear();
             SearchableEntries.Clear();
             FilteredSearchEntries.Clear();
-            JsonLogSummary = null;
+            JsonLogSummary = new JsonLogSummary();
             JsonTree.Add(new JsonTreeNode("Error", ex.Message, "Error"));
         }
+    }
+
+    /// <summary>
+    /// Fills Actions on unified entries from raw JSON when the deserialized Cursor entry didn't have them
+    /// (e.g. "Actions" vs "actions" or different structure). Ensures req-001-logging-system and others show actions.
+    /// </summary>
+    private static void FillActionsFromRawJson(string jsonContent, UnifiedSessionLog unifiedLog)
+    {
+        if (unifiedLog?.Entries == null || unifiedLog.Entries.Count == 0) return;
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonContent);
+            var root = doc.RootElement;
+            if (!TryGetPropertyCI(root, "entries", out var entriesProp) || entriesProp.ValueKind != JsonValueKind.Array)
+                return;
+            int i = 0;
+            foreach (var entryEl in entriesProp.EnumerateArray())
+            {
+                if (i >= unifiedLog.Entries.Count) break;
+                if (unifiedLog.Entries[i].Actions.Count == 0)
+                {
+                    var actions = UnifiedLogFactory.ParseActionsFromEntryElement(entryEl);
+                    if (actions.Count > 0)
+                        unifiedLog.Entries[i].Actions = new ObservableCollection<UnifiedAction>(actions);
+                }
+                i++;
+            }
+        }
+        catch
+        {
+            // Ignore; we already have whatever the deserializer gave us
+        }
+    }
+
+    private static bool TryGetPropertyCI(JsonElement element, string propertyName, out JsonElement value)
+    {
+        value = default;
+        if (element.ValueKind != JsonValueKind.Object) return false;
+        if (element.TryGetProperty(propertyName, out value)) return true;
+        foreach (var prop in element.EnumerateObject())
+        {
+            if (string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = prop.Value;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool HasKeyCI(JsonObject obj, string key)
+    {
+        foreach (var kv in obj)
+        {
+            if (string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsSingleCursorRequest(JsonObject obj)
+    {
+        if (!HasKeyCI(obj, "requestId")) return false;
+        return HasKeyCI(obj, "exactRequest") || HasKeyCI(obj, "exactRequestNote") ||
+               HasKeyCI(obj, "actions");
+    }
+
+    private static void FillActionsFromSingleEntryJson(string jsonContent, UnifiedSessionLog unifiedLog)
+    {
+        if (unifiedLog?.Entries == null || unifiedLog.Entries.Count == 0) return;
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonContent);
+            var actions = UnifiedLogFactory.ParseActionsFromEntryElement(doc.RootElement);
+            if (actions.Count > 0)
+                unifiedLog.Entries[0].Actions = new ObservableCollection<UnifiedAction>(actions);
+        }
+        catch { /* ignore */ }
     }
 
     private void BuildCopilotSummaryAndIndex(CopilotSessionLog log, JsonLogSummary summary)
@@ -852,16 +983,16 @@ public partial class MainWindowViewModel : ViewModelBase
     {
          var summary = new JsonLogSummary();
          BuildUnifiedSummaryAndIndex(log, summary);
-         
+
          // Update Summary Header for Aggregated view
          summary.SummaryLines.Clear();
          summary.SummaryLines.Add($"Type: {log.SourceType}");
          summary.SummaryLines.Add($"Total Entries: {log.EntryCount}");
          summary.SummaryLines.Add($"Total Tokens: {log.TotalTokens:N0}");
          summary.SummaryLines.Add($"Aggregated at: {log.Started}");
-         
+
          JsonLogSummary = summary;
-         
+
          // Build Tree
          JsonTree.Clear();
          var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false };
@@ -878,18 +1009,18 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         summary.SearchIndex = new List<SearchableEntry>();
         var entries = log.Entries;
-        
+
         for (int i = 0; i < entries.Count; i++)
         {
             var e = entries[i];
             var display = (e.QueryText ?? "").Trim(); // Updated field name
             if (display.Length > 60) display = display.Substring(0, 57) + "...";
-            
-            var searchText = string.Join(" ", 
-                e.RequestId ?? "", 
+
+            var searchText = string.Join(" ",
+                e.RequestId ?? "",
                 e.QueryText ?? "",  // Updated field name
                 e.QueryTitle ?? "", // Updated field name
-                e.Model ?? "", 
+                e.Model ?? "",
                 e.Timestamp?.ToString() ?? "",
                 e.Status ?? "");
 
@@ -943,10 +1074,10 @@ public partial class MainWindowViewModel : ViewModelBase
         else if (node is JsonArray jsonArray)
         {
             IEnumerable<JsonNode?> items = jsonArray;
-            
+
             // Sort requests/entries by timestamp descending if applicable
             bool isSorted = false;
-            if (parent.Name.Equals("requests", StringComparison.OrdinalIgnoreCase) || 
+            if (parent.Name.Equals("requests", StringComparison.OrdinalIgnoreCase) ||
                 parent.Name.Equals("entries", StringComparison.OrdinalIgnoreCase))
             {
                 items = jsonArray.OrderByDescending(n => {
@@ -956,7 +1087,7 @@ public partial class MainWindowViewModel : ViewModelBase
                          {
                              if (tsVal.TryGetValue(out DateTime dt)) return dt;
                              if (tsVal.TryGetValue(out string? s) && DateTime.TryParse(s, out var dt2)) return dt2;
-                             
+
                              // Try numeric timestamp (Unix seconds or milliseconds)
                              if (tsVal.TryGetValue(out long tsLong))
                              {
@@ -985,7 +1116,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 var child = (pathPrefix == "requests" || pathPrefix == "entries")
                     ? new JsonTreeNode($"[{index}]", "", "Item", itemPath)
                     : new JsonTreeNode($"[{index}]", "", "Item");
-                
+
                 string timestampPrefix = "";
                 if (item is JsonObject objTS && objTS.TryGetPropertyValue("timestamp", out var tsNode))
                 {
@@ -994,7 +1125,7 @@ public partial class MainWindowViewModel : ViewModelBase
                     if (tsNode is JsonValue tsVal)
                     {
                          if (tsVal.TryGetValue(out DateTime dt)) tsStr = dt.ToString("MM/dd HH:mm");
-                         else if (tsVal.TryGetValue(out long l)) 
+                         else if (tsVal.TryGetValue(out long l))
                          {
                              // Try to format unix time
                              try {
@@ -1018,7 +1149,7 @@ public partial class MainWindowViewModel : ViewModelBase
                         }
                     }
                 }
-                
+
                 // If no text found but we have timestamp, show it
                 if (string.IsNullOrEmpty(child.Value) && !string.IsNullOrEmpty(timestampPrefix))
                 {
@@ -1040,7 +1171,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         Nodes.Clear();
         string resolvedPath = GetResolvedTargetPath();
-        
+
         // Add "All JSON" node
         var allJsonNode = new FileNode("ALL_JSON_VIRTUAL_NODE", false) { Name = "All JSON" };
         Nodes.Add(allJsonNode);
@@ -1049,6 +1180,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             SetStatus($"Directory not found: {resolvedPath}");
             Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
+            SelectedNode = allJsonNode;
             return;
         }
 
@@ -1057,20 +1189,15 @@ public partial class MainWindowViewModel : ViewModelBase
         LoadChildren(root);
         Nodes.Add(root);
 
-        // Try to find readme.md
-        var readme = root.Children.FirstOrDefault(n => n.Name.Equals("readme.md", StringComparison.OrdinalIgnoreCase));
-        if (readme != null)
-        {
-            SelectedNode = readme;
-        }
+        SelectedNode = allJsonNode;
     }
 
     private void LoadChildren(FileNode node)
     {
-        try 
+        try
         {
             var dirInfo = new DirectoryInfo(node.Path);
-            
+
             foreach (var dir in dirInfo.GetDirectories())
             {
                 var childNode = new FileNode(dir.FullName, true);
@@ -1078,9 +1205,9 @@ public partial class MainWindowViewModel : ViewModelBase
                 node.Children.Add(childNode);
             }
 
-            foreach (var file in dirInfo.GetFiles()) 
+            foreach (var file in dirInfo.GetFiles())
             {
-                if (file.Extension.Equals(".md", StringComparison.OrdinalIgnoreCase) || 
+                if (file.Extension.Equals(".md", StringComparison.OrdinalIgnoreCase) ||
                     file.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
                 {
                     node.Children.Add(new FileNode(file.FullName, false));
@@ -1123,7 +1250,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void OnTreeChanged(object sender, FileSystemEventArgs e)
     {
-        Dispatcher.UIThread.InvokeAsync(() => 
+        Dispatcher.UIThread.InvokeAsync(() =>
         {
              InitializeTree();
         });
@@ -1131,13 +1258,13 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void OnFileChanged(object sender, FileSystemEventArgs e)
     {
-        Dispatcher.UIThread.InvokeAsync(() => 
+        Dispatcher.UIThread.InvokeAsync(() =>
         {
             // If the changed file is the current one, regenerate
             if (_currentMarkdownPath != null && e.FullPath.Equals(_currentMarkdownPath, StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine($"Detected change in current file: {e.FullPath}");
-                
+
                 // Log the change
                 ChangeLog.Insert(0, $"[{DateTime.Now:HH:mm:ss}] Rebuilt: {Path.GetFileName(e.FullPath)}");
 
@@ -1145,16 +1272,16 @@ public partial class MainWindowViewModel : ViewModelBase
                 // But we need to call GenerateAndNavigate with a node.
                 var node = new FileNode(e.FullPath, false);
                 GenerateAndNavigate(node);
-                
-                // Refresh the WebView by resetting the property or notifying? 
+
+                // Refresh the WebView by resetting the property or notifying?
                 // Since HtmlSource is a Uri, setting it to the SAME Uri might not trigger property changed or webview reload.
                 // We might need to toggle it or use a query param.
-                
+
                 // Hack: Append timestamp to URL to force reload
                 var currentUri = HtmlSource;
                 if (currentUri != null)
                 {
-                     // Just re-setting the same URI should work if the file changed? 
+                     // Just re-setting the same URI should work if the file changed?
                      // WebView might cache.
                      // Let's create a NEW Uri object.
                      HtmlSource = new Uri(currentUri.AbsoluteUri + "?t=" + DateTime.Now.Ticks);

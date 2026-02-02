@@ -10,6 +10,7 @@
 
   <UserControl.Resources>
       <conv:ObjectToJsonConverter x:Key="ObjectToJson"/>
+      <conv:CountToVisibilityConverter x:Key="CountToVisibility"/>
   </UserControl.Resources>
 
   <ScrollViewer>
@@ -22,7 +23,7 @@
         </StackPanel>
         <SelectableTextBlock Grid.Column="1" Text="{Binding Timestamp}" FontSize="12" Foreground="Gray" />
       </Grid>
-      
+
       <!-- Metadata Badges -->
       <WrapPanel Orientation="Horizontal">
         <WrapPanel.Styles>
@@ -37,12 +38,12 @@
             <Setter Property="Foreground" Value="Black"/>
           </Style>
         </WrapPanel.Styles>
-        
+
         <Border><SelectableTextBlock Text="{Binding Model}" /></Border>
         <Border IsVisible="{Binding ModelProvider, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
             <SelectableTextBlock Text="{Binding ModelProvider}" />
         </Border>
-        <Border Background="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"> <!-- TODO: Color converter -->
+        <Border IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
             <SelectableTextBlock Text="{Binding Status}" />
         </Border>
         <Border><SelectableTextBlock Text="{Binding TokenCount, StringFormat='Tokens: {0}'}" /></Border>
@@ -75,24 +76,45 @@
         </Border>
       </Expander>
 
-      <!-- Actions Grid (if present) -->
-      <StackPanel IsVisible="{Binding HasActions}">
-          <TextBlock Text="Actions" FontWeight="SemiBold" Margin="0,10,0,0"/>
-          <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Background="White">
-              <DataGrid ItemsSource="{Binding Actions}" AutoGenerateColumns="False" IsReadOnly="True" GridLinesVisibility="All" BorderThickness="0">
-                  <DataGrid.Columns>
-                      <DataGridTextColumn Header="#" Binding="{Binding Order}" Width="40"/>
-                      <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="90"/>
-                      <DataGridTemplateColumn Header="Description" Width="*">
-                          <DataGridTemplateColumn.CellTemplate>
-                              <DataTemplate>
-                                  <TextBlock Text="{Binding Description}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="5"/>
+      <!-- Actions: always show section; grid when there are items, empty-state message when none -->
+      <StackPanel>
+          <TextBlock Text="{Binding Actions.Count, StringFormat='Actions ({0})'}" FontWeight="SemiBold" Margin="0,10,0,4"/>
+          <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Background="White" Padding="12" MinHeight="80">
+              <Grid>
+                  <TextBlock Text="No actions recorded." Foreground="Gray" FontStyle="Italic" HorizontalAlignment="Center" VerticalAlignment="Center"
+                             IsVisible="{Binding Actions, Converter={StaticResource CountToVisibility}, ConverterParameter='Invert'}"/>
+                  <StackPanel IsVisible="{Binding Actions, Converter={StaticResource CountToVisibility}}">
+                      <Border BorderBrush="#C0C0C0" BorderThickness="0,0,0,1" Padding="0,0,0,4" Margin="0,0,0,6">
+                          <Grid ColumnDefinitions="40,100,*,90,120">
+                              <TextBlock Grid.Column="0" Text="#" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="1" Text="Type" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="2" Text="Description" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold" Margin="4,0"/>
+                              <TextBlock Grid.Column="3" Text="Status" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="4" Text="File Path" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
+                          </Grid>
+                      </Border>
+                      <ItemsControl ItemsSource="{Binding Actions}">
+                          <ItemsControl.ItemsPanel>
+                              <ItemsPanelTemplate>
+                                  <StackPanel Spacing="4"/>
+                              </ItemsPanelTemplate>
+                          </ItemsControl.ItemsPanel>
+                          <ItemsControl.ItemTemplate>
+                              <DataTemplate DataType="models:UnifiedAction">
+                                  <Border BorderBrush="#C0C0C0" BorderThickness="0,0,0,1">
+                                      <Grid ColumnDefinitions="40,100,*,90,120">
+                                          <SelectableTextBlock Grid.Column="0" Text="{Binding Order}" FontFamily="Consolas, Monospace" FontSize="12"/>
+                                          <SelectableTextBlock Grid.Column="1" Text="{Binding Type}" FontFamily="Consolas, Monospace" FontSize="12" TextWrapping="Wrap"/>
+                                          <SelectableTextBlock Grid.Column="2" Text="{Binding Description}" FontFamily="Consolas, Monospace" FontSize="12" TextWrapping="Wrap" Margin="4,0"/>
+                                          <SelectableTextBlock Grid.Column="3" Text="{Binding Status}" FontFamily="Consolas, Monospace" FontSize="12"/>
+                                          <SelectableTextBlock Grid.Column="4" Text="{Binding FilePath}" FontFamily="Consolas, Monospace" FontSize="12" TextWrapping="Wrap"/>
+                                      </Grid>
+                                  </Border>
                               </DataTemplate>
-                          </DataGridTemplateColumn.CellTemplate>
-                      </DataGridTemplateColumn>
-                      <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80"/>
-                  </DataGrid.Columns>
-              </DataGrid>
+                          </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                  </StackPanel>
+              </Grid>
           </Border>
       </StackPanel>
 
@@ -110,10 +132,10 @@
       <!-- Tags/Notes -->
       <Expander Header="Tags &amp; Notes" IsExpanded="True">
         <StackPanel Spacing="5">
-            <SelectableTextBlock Text="{Binding FailureNote, StringFormat='Failure Note: {0}'}" 
-                       IsVisible="{Binding FailureNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" 
+            <SelectableTextBlock Text="{Binding FailureNote, StringFormat='Failure Note: {0}'}"
+                       IsVisible="{Binding FailureNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                        Foreground="Red"/>
-            
+
             <ItemsControl ItemsSource="{Binding Tags}">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -132,7 +154,7 @@
       <!-- Original JSON -->
       <Expander Header="Original JSON">
           <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
-            <SelectableTextBlock Text="{Binding OriginalEntry, Converter={StaticResource ObjectToJson}}" 
+            <SelectableTextBlock Text="{Binding OriginalEntry, Converter={StaticResource ObjectToJson}}"
                                TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
           </Border>
       </Expander>
