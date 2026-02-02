@@ -143,7 +143,7 @@ namespace RequestTracker.Models.Json
                         
                         QueryText = r.ExactRequest,
                         QueryTitle = r.ExactRequestNote,
-                        Response = r.Response != null ? string.Join("", r.Response) : "",
+                        Response = ParseCursorResponse(r.Response),
                         Status = r.Successfulness?.Score != null ? "Scored" : "Unknown",
                         
                         ContextList = r.ContextApplied ?? new List<string>(),
@@ -209,6 +209,32 @@ namespace RequestTracker.Models.Json
             if (responseObj == null) return "";
             if (responseObj is string s) return s;
             if (responseObj is System.Text.Json.JsonElement e) return e.ToString();
+            return responseObj.ToString() ?? "";
+        }
+
+        private static string ParseCursorResponse(object? responseObj)
+        {
+            if (responseObj == null) return "";
+            if (responseObj is string s) return s;
+            if (responseObj is System.Text.Json.JsonElement e) 
+            {
+                if (e.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var item in e.EnumerateArray())
+                    {
+                        sb.Append(item.ToString());
+                    }
+                    return sb.ToString();
+                }
+                return e.ToString();
+            }
+            if (responseObj is System.Collections.IEnumerable list && !(responseObj is string))
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (var item in list) sb.Append(item?.ToString());
+                return sb.ToString();
+            }
             return responseObj.ToString() ?? "";
         }
     }

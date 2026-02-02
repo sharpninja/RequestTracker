@@ -1,0 +1,101 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:models="clr-namespace:RequestTracker.Models.Json"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="RequestTracker.Views.RequestDetailsView"
+             x:DataType="models:UnifiedRequestEntry">
+  
+  <ScrollViewer>
+    <StackPanel Spacing="10" Margin="10">
+      <!-- Header -->
+      <Grid ColumnDefinitions="*, Auto">
+        <StackPanel Grid.Column="0">
+          <SelectableTextBlock Text="{Binding QueryTitle}" FontSize="18" FontWeight="Bold" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="{Binding RequestId}" FontSize="12" Foreground="Gray" />
+        </StackPanel>
+        <SelectableTextBlock Grid.Column="1" Text="{Binding Timestamp}" FontSize="12" Foreground="Gray" />
+      </Grid>
+      
+      <!-- Metadata Badges -->
+      <WrapPanel Orientation="Horizontal">
+        <WrapPanel.Styles>
+          <Style Selector="Border">
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Background" Value="#E0E0E0"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="Margin" Value="0,0,8,8"/>
+          </Style>
+          <Style Selector="SelectableTextBlock">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="Black"/>
+          </Style>
+        </WrapPanel.Styles>
+        
+        <Border><SelectableTextBlock Text="{Binding Model}" /></Border>
+        <Border IsVisible="{Binding ModelProvider, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <SelectableTextBlock Text="{Binding ModelProvider}" />
+        </Border>
+        <Border Background="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"> <!-- TODO: Color converter -->
+            <SelectableTextBlock Text="{Binding Status}" />
+        </Border>
+        <Border><SelectableTextBlock Text="{Binding TokenCount, StringFormat='Tokens: {0}'}" /></Border>
+        <Border IsVisible="{Binding IsPremium}"><SelectableTextBlock Text="Premium" Foreground="DarkGoldenrod"/></Border>
+        <Border IsVisible="{Binding Score, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <SelectableTextBlock Text="{Binding Score, StringFormat='Score: {0}'}" />
+        </Border>
+      </WrapPanel>
+
+      <Separator />
+
+      <!-- Query -->
+      <TextBlock Text="Query" FontWeight="SemiBold" />
+      <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
+        <SelectableTextBlock Text="{Binding QueryText}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
+      </Border>
+
+      <!-- Response -->
+      <TextBlock Text="Response" FontWeight="SemiBold" />
+      <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
+        <SelectableTextBlock Text="{Binding Response}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
+      </Border>
+
+      <!-- Context -->
+      <Expander Header="Context">
+        <ItemsControl ItemsSource="{Binding ContextList}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <SelectableTextBlock Text="{Binding}" Margin="0,2" FontSize="12" TextWrapping="Wrap"/>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Expander>
+
+      <!-- Tags/Notes -->
+      <Expander Header="Tags &amp; Notes">
+        <StackPanel Spacing="5">
+            <SelectableTextBlock Text="{Binding FailureNote, StringFormat='Failure Note: {0}'}" 
+                       IsVisible="{Binding FailureNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" 
+                       Foreground="Red"/>
+            
+            <ItemsControl ItemsSource="{Binding Tags}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                   <Border CornerRadius="10" Background="#E0E0E0" Padding="8,2" Margin="0,0,5,5">
+                     <SelectableTextBlock Text="{Binding}" FontSize="11" Foreground="Black"/>
+                   </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+      </Expander>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -49,6 +49,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _isJsonVisible = false;
 
     [ObservableProperty]
+    private bool _isRequestDetailsVisible = false;
+
+    [ObservableProperty]
+    private UnifiedRequestEntry? _selectedUnifiedRequest;
+
+    [ObservableProperty]
     private ObservableCollection<JsonTreeNode> _jsonTree = new();
 
     [ObservableProperty]
@@ -184,6 +190,26 @@ public partial class MainWindowViewModel : ViewModelBase
              
              GenerateAndNavigate(SelectedNode);
         }
+    }
+
+    [RelayCommand]
+    private void ShowRequestDetails(SearchableEntry entry)
+    {
+        if (entry != null && entry.UnifiedEntry != null)
+        {
+            SelectedUnifiedRequest = entry.UnifiedEntry;
+            IsMarkdownVisible = false;
+            IsJsonVisible = false;
+            IsRequestDetailsVisible = true;
+        }
+    }
+
+    [RelayCommand]
+    private void CloseRequestDetails()
+    {
+        IsRequestDetailsVisible = false;
+        IsJsonVisible = true;
+        IsMarkdownVisible = false;
     }
 
     partial void OnSelectedNodeChanging(FileNode? value)
@@ -403,6 +429,9 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void GenerateAndNavigate(FileNode? node)
     {
+         // Reset details view
+         IsRequestDetailsVisible = false;
+
          if (node == null)
          {
              return;
@@ -872,7 +901,8 @@ public partial class MainWindowViewModel : ViewModelBase
                 Model = e.Model ?? "",
                 EntryIndex = i,
                 SourcePath = $"entries[{i}]", // Matches Unified Model structure
-                SearchText = searchText
+                SearchText = searchText,
+                UnifiedEntry = e
             });
         }
         SearchableEntries = new ObservableCollection<SearchableEntry>(summary.SearchIndex);

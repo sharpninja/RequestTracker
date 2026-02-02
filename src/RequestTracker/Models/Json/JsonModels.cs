@@ -159,7 +159,7 @@ namespace RequestTracker.Models.Json
         public List<string> Interpretation { get; set; }
 
         [JsonPropertyName("response")]
-        public List<string> Response { get; set; }
+        public object Response { get; set; }
 
         [JsonPropertyName("actionsTaken")]
         public List<string> ActionsTaken { get; set; }

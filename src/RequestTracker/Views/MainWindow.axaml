@@ -7,8 +7,10 @@
         xmlns:models="using:RequestTracker.Models"
         xmlns:jsonModels="using:RequestTracker.Models.Json"
         xmlns:conv="using:RequestTracker.Converters"
+        xmlns:views="using:RequestTracker.Views"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="RequestTracker.Views.MainWindow"
+        x:Name="Root"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
         Title="RequestTracker"
@@ -104,7 +106,13 @@
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="jsonModels:SearchableEntry">
-                                        <TextBlock Text="{Binding ListLine}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" FontSize="11"/>
+                                        <Grid ColumnDefinitions="*, Auto">
+                                            <TextBlock Grid.Column="0" Text="{Binding ListLine}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" FontSize="11" VerticalAlignment="Center"/>
+                                            <Button Grid.Column="1" Content="View" FontSize="10" Padding="5,2" Margin="5,0,0,0"
+                                                    Command="{Binding #Root.((vm:MainWindowViewModel)DataContext).ShowRequestDetailsCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    IsVisible="{Binding UnifiedEntry, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
@@ -123,6 +131,14 @@
                             </TreeDataTemplate>
                         </TreeView.ItemTemplate>
                     </TreeView>
+                </Grid>
+             </Border>
+
+             <!-- Request Details View -->
+             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsRequestDetailsVisible}">
+                <Grid RowDefinitions="Auto, *">
+                    <Button Grid.Row="0" Content="← Back to List" Command="{Binding CloseRequestDetailsCommand}" Margin="5"/>
+                    <views:RequestDetailsView Grid.Row="1" DataContext="{Binding SelectedUnifiedRequest}"/>
                 </Grid>
              </Border>
 

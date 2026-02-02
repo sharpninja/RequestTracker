@@ -94,5 +94,10 @@ namespace RequestTracker.Models.Json
         public string ListLine => string.IsNullOrEmpty(Timestamp)
             ? $"{DisplayText} | {Model}"
             : $"{DisplayText} | {Model} | {Timestamp}";
+
+        /// <summary>
+        /// Reference to the unified entry object for detailed viewing.
+        /// </summary>
+        public UnifiedRequestEntry? UnifiedEntry { get; set; }
     }
 }
