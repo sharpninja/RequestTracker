@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Linq;
@@ -137,10 +138,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanNavigateBack))]
     private void NavigateBack()
     {
-        if (_backStack.Count > 0 && _selectedNode != null)
+        if (_backStack.Count > 0 && SelectedNode != null)
         {
             _isNavigatingHistory = true;
-            _forwardStack.Push(_selectedNode);
+            _forwardStack.Push(SelectedNode);
             SelectedNode = _backStack.Pop();
             _isNavigatingHistory = false;
             
@@ -154,10 +155,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanNavigateForward))]
     private void NavigateForward()
     {
-        if (_forwardStack.Count > 0 && _selectedNode != null)
+        if (_forwardStack.Count > 0 && SelectedNode != null)
         {
             _isNavigatingHistory = true;
-            _backStack.Push(_selectedNode);
+            _backStack.Push(SelectedNode);
             SelectedNode = _forwardStack.Pop();
             _isNavigatingHistory = false;
 
@@ -171,25 +172,25 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void Refresh()
     {
-        if (_selectedNode != null)
+        if (SelectedNode != null)
         {
             // Force regenerate
-             string hash = _selectedNode.Path.GetHashCode().ToString("X");
-             string tempFileName = $"{Path.GetFileNameWithoutExtension(_selectedNode.Path)}_{hash}.html";
+             string hash = SelectedNode.Path.GetHashCode().ToString("X");
+             string tempFileName = $"{Path.GetFileNameWithoutExtension(SelectedNode.Path)}_{hash}.html";
              string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
              string tempPath = Path.Combine(tempDir, tempFileName);
              
              if (File.Exists(tempPath)) File.Delete(tempPath);
              
-             GenerateAndNavigate(_selectedNode);
+             GenerateAndNavigate(SelectedNode);
         }
     }
 
     partial void OnSelectedNodeChanging(FileNode? value)
     {
-        if (!_isNavigatingHistory && _selectedNode != null && value != null && _selectedNode != value)
+        if (!_isNavigatingHistory && SelectedNode != null && value != null && SelectedNode != value)
         {
-            _backStack.Push(_selectedNode);
+            _backStack.Push(SelectedNode);
             _forwardStack.Clear();
             
             NavigateBackCommand.NotifyCanExecuteChanged();
@@ -402,10 +403,20 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void GenerateAndNavigate(FileNode? node)
     {
-         if (node == null || node.IsDirectory)
+         if (node == null)
          {
              return;
          }
+
+         if (node.Path == "ALL_JSON_VIRTUAL_NODE")
+         {
+             IsMarkdownVisible = false;
+             IsJsonVisible = true;
+             LoadAllJson();
+             return;
+         }
+
+         if (node.IsDirectory) return;
 
          if (node.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
          {
@@ -459,7 +470,136 @@ public partial class MainWindowViewModel : ViewModelBase
 
          // Force reload if needed by appending timestamp or just new Uri
          HtmlSource = new Uri($"file:///{tempPath.Replace('\\', '/')}");
+
+         // Per Avalonia docs: on Linux use a separate window/dialog for web content (NativeWebView is unsupported).
+         // With current WebView.Avalonia we open the HTML in the system default browser so preview works in WSL/WSLg.
+         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+         {
+             OpenHtmlInDefaultBrowser(tempPath);
          }
+         }
+    }
+
+    private void LoadAllJson()
+    {
+        var rootPath = GetResolvedTargetPath();
+        if (!Directory.Exists(rootPath))
+        {
+            StatusMessage = "Root directory not found.";
+            return;
+        }
+
+        StatusMessage = "Aggregating all JSON files...";
+        
+        // Use a safe wrapper to catch background exceptions
+        Task.Run(async () => 
+        {
+            try
+            {
+                var jsonFiles = Directory.GetFiles(rootPath, "*.json", SearchOption.AllDirectories);
+                var unifiedLogs = new List<UnifiedSessionLog>();
+                int totalRequests = 0;
+
+                foreach (var file in jsonFiles)
+                {
+                    try
+                    {
+                        var text = await File.ReadAllTextAsync(file);
+                        
+                        // Try Copilot first
+                        try 
+                        {
+                            var copilotLog = JsonSerializer.Deserialize<CopilotSessionLog>(text, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (copilotLog?.Requests != null)
+                            {
+                                var unified = UnifiedLogFactory.Create(copilotLog);
+                                unifiedLogs.Add(unified);
+                                totalRequests += unified.EntryCount;
+                                continue;
+                            }
+                        }
+                        catch {}
+
+                        // Try Cursor
+                        try
+                        {
+                            var cursorLog = JsonSerializer.Deserialize<CursorRequestLog>(text, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (cursorLog?.Entries != null)
+                            {
+                                 var unified = UnifiedLogFactory.Create(cursorLog);
+                                 unifiedLogs.Add(unified);
+                                 totalRequests += unified.EntryCount;
+                                 continue;
+                            }
+                        }
+                        catch {}
+                    }
+                    catch 
+                    {
+                        // Skip unreadable files
+                    }
+                }
+
+                // Aggregate into a single master log
+                var masterLog = new UnifiedSessionLog
+                {
+                    SourceType = "Aggregated",
+                    SessionId = "ALL-JSON",
+                    Title = "All Requests",
+                    Model = "Various",
+                    Started = DateTime.Now,
+                    Status = "Aggregated",
+                    EntryCount = totalRequests,
+                    Entries = unifiedLogs.SelectMany(l => l.Entries).OrderByDescending(e => e.Timestamp).ToList(),
+                    TotalTokens = unifiedLogs.Sum(l => l.TotalTokens)
+                };
+                
+                // Update UI on main thread
+                Dispatcher.UIThread.Post(() => 
+                {
+                    try
+                    {
+                        BuildUnifiedSummaryAndIndex(masterLog);
+                        StatusMessage = $"Loaded {totalRequests} requests from {jsonFiles.Length} files.";
+                    }
+                    catch (Exception ex)
+                    {
+                        StatusMessage = $"Error building UI: {ex.Message}";
+                        Console.WriteLine($"UI Build Error: {ex}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.UIThread.Post(() => StatusMessage = $"Error aggregating JSON: {ex.Message}");
+                Console.WriteLine($"Aggregation Error: {ex}");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Opens an HTML file in the system default browser. Used on Linux/WSL where embedded WebView is unsupported
+    /// (per Avalonia docs: use NativeWebDialog or a separate window on Linux; we use xdg-open as a workaround).
+    /// </summary>
+    private static void OpenHtmlInDefaultBrowser(string htmlFilePath)
+    {
+        if (!File.Exists(htmlFilePath)) return;
+        try
+        {
+            var path = Path.GetFullPath(htmlFilePath);
+            var psi = new ProcessStartInfo
+            {
+                FileName = "xdg-open",
+                Arguments = path,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not open in browser: {ex.Message}");
+        }
     }
 
     private bool ConvertMarkdownToHtml(string srcPath, string destPath)
@@ -679,6 +819,32 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private void BuildUnifiedSummaryAndIndex(UnifiedSessionLog log)
+    {
+         var summary = new JsonLogSummary();
+         BuildUnifiedSummaryAndIndex(log, summary);
+         
+         // Update Summary Header for Aggregated view
+         summary.SummaryLines.Clear();
+         summary.SummaryLines.Add($"Type: {log.SourceType}");
+         summary.SummaryLines.Add($"Total Entries: {log.EntryCount}");
+         summary.SummaryLines.Add($"Total Tokens: {log.TotalTokens:N0}");
+         summary.SummaryLines.Add($"Aggregated at: {log.Started}");
+         
+         JsonLogSummary = summary;
+         
+         // Build Tree
+         JsonTree.Clear();
+         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false };
+         var unifiedNode = JsonSerializer.SerializeToNode(log, options);
+         var root = new JsonTreeNode("Root", "Aggregated Unified Log", "Object");
+         root.IsExpanded = true;
+         BuildJsonTree(unifiedNode, root, null);
+         JsonTree.Add(root);
+
+         UpdateFilteredSearchEntries();
+    }
+
     private void BuildUnifiedSummaryAndIndex(UnifiedSessionLog log, JsonLogSummary summary)
     {
         summary.SearchIndex = new List<SearchableEntry>();
@@ -844,9 +1010,15 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         Nodes.Clear();
         string resolvedPath = GetResolvedTargetPath();
+        
+        // Add "All JSON" node
+        var allJsonNode = new FileNode("ALL_JSON_VIRTUAL_NODE", false) { Name = "All JSON" };
+        Nodes.Add(allJsonNode);
+
         if (!Directory.Exists(resolvedPath))
         {
             SetStatus($"Directory not found: {resolvedPath}");
+            Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
             return;
         }
 

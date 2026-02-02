@@ -37,6 +37,16 @@ public partial class MainWindow : Window
         this.PositionChanged += OnWindowPositionChanged;
         this.Closed += OnWindowClosed;
         this.Opened += OnWindowOpened;
+        this.GetObservable(WindowStateProperty).Subscribe(new WindowStateObserver(this));
+    }
+
+    private sealed class WindowStateObserver : IObserver<WindowState>
+    {
+        private readonly MainWindow _window;
+        public WindowStateObserver(MainWindow window) => _window = window;
+        public void OnCompleted() { }
+        public void OnError(Exception error) { }
+        public void OnNext(WindowState value) { _window.SaveWindowStateToSettings(); _window.SaveSettings(); }
     }
 
     private void ApplyWindowSettings()
@@ -127,32 +137,32 @@ public partial class MainWindow : Window
 
     private void OnWindowClosed(object? sender, EventArgs e)
     {
-        // Save current state before closing
         if (_wasPortrait.HasValue)
-        {
             SaveCurrentLayoutToSettings(_wasPortrait.Value);
-        }
-        
-        // Save window state if not minimized (to avoid saving 0 size or off-screen position)
-        if (this.WindowState == WindowState.Normal || this.WindowState == WindowState.Maximized)
-        {
-            _layoutSettings.WindowState = this.WindowState;
-            
-            if (this.WindowState == WindowState.Normal)
-            {
-                _layoutSettings.WindowWidth = this.Width;
-                _layoutSettings.WindowHeight = this.Height;
-                _layoutSettings.WindowX = this.Position.X;
-                _layoutSettings.WindowY = this.Position.Y;
-            }
-        }
-
+        SaveWindowStateToSettings();
         SaveSettings();
     }
 
     private void OnWindowPositionChanged(object? sender, PixelPointEventArgs e)
     {
-        // Optional: Track live position updates if needed, but OnWindowClosed is usually sufficient
+        // Position is saved on size/state change and on close; no need to save on every move
+    }
+
+    /// <summary>
+    /// Updates _layoutSettings from current window state, size and position. Call before SaveSettings().
+    /// </summary>
+    private void SaveWindowStateToSettings()
+    {
+        if (WindowState == WindowState.Minimized)
+            return;
+        _layoutSettings.WindowState = WindowState;
+        if (WindowState == WindowState.Normal)
+        {
+            _layoutSettings.WindowWidth = Width;
+            _layoutSettings.WindowHeight = Height;
+            _layoutSettings.WindowX = Position.X;
+            _layoutSettings.WindowY = Position.Y;
+        }
     }
 
     private void OnWindowSizeChanged(object? sender, SizeChangedEventArgs e)
@@ -172,6 +182,9 @@ public partial class MainWindow : Window
         _wasPortrait = isPortrait;
 
         UpdateLayoutForOrientation(isPortrait);
+
+        SaveWindowStateToSettings();
+        SaveSettings();
     }
 
     private void SaveCurrentLayoutToSettings(bool isPortrait)
