@@ -201,50 +201,63 @@ namespace RequestTracker.Models.Json
             var list = new List<UnifiedAction>();
             if (actionsObj == null) return list;
             
-            System.Text.Json.JsonElement? arrElement = null;
-
             if (actionsObj is System.Text.Json.JsonElement element)
             {
-                arrElement = element;
+                ParseActionsFromElement(element, list);
             }
             else if (actionsObj is string jsonString)
             {
                  try {
-                     var doc = System.Text.Json.JsonDocument.Parse(jsonString);
-                     arrElement = doc.RootElement;
-                 } catch {}
+                     using var doc = System.Text.Json.JsonDocument.Parse(jsonString);
+                     ParseActionsFromElement(doc.RootElement, list);
+                 } catch (Exception ex) {
+                     System.Diagnostics.Debug.WriteLine($"Failed to parse actions JSON: {ex.Message}");
+                 }
             }
+            return list;
+        }
 
-            if (arrElement.HasValue && arrElement.Value.ValueKind == System.Text.Json.JsonValueKind.Array)
+        private static void ParseActionsFromElement(System.Text.Json.JsonElement arrElement, List<UnifiedAction> list)
+        {
+            if (arrElement.ValueKind == System.Text.Json.JsonValueKind.Array)
             {
                 int idx = 1;
-                foreach (var item in arrElement.Value.EnumerateArray())
+                foreach (var item in arrElement.EnumerateArray())
                 {
                     var action = new UnifiedAction();
                     
-                    // Order
-                    if (item.TryGetProperty("order", out var order) && order.ValueKind == System.Text.Json.JsonValueKind.Number) 
+                    if (TryGetPropertyCI(item, "order", out var order) && order.ValueKind == System.Text.Json.JsonValueKind.Number) 
                         action.Order = order.GetInt32();
                     else 
                         action.Order = idx++;
                     
-                    // Description
-                    if (item.TryGetProperty("description", out var desc)) action.Description = desc.ToString();
-                    
-                    // Type
-                    if (item.TryGetProperty("type", out var type)) action.Type = type.ToString();
-                    
-                    // Status
-                    if (item.TryGetProperty("status", out var status)) action.Status = status.ToString();
-                    
-                    // FilePath
-                    if (item.TryGetProperty("filePath", out var fp)) action.FilePath = fp.ToString();
-                    else if (item.TryGetProperty("filePaths", out var fps)) action.FilePath = "Multiple files";
+                    if (TryGetPropertyCI(item, "description", out var desc)) action.Description = desc.ToString();
+                    if (TryGetPropertyCI(item, "type", out var type)) action.Type = type.ToString();
+                    if (TryGetPropertyCI(item, "status", out var status)) action.Status = status.ToString();
+                    if (TryGetPropertyCI(item, "filePath", out var fp)) action.FilePath = fp.ToString();
+                    else if (TryGetPropertyCI(item, "filePaths", out var fps)) action.FilePath = "Multiple files";
                     
                     list.Add(action);
                 }
             }
-            return list;
+        }
+
+        private static bool TryGetPropertyCI(System.Text.Json.JsonElement element, string propertyName, out System.Text.Json.JsonElement value)
+        {
+            value = default;
+            if (element.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+
+            if (element.TryGetProperty(propertyName, out value)) return true;
+            
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = prop.Value;
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static int ParseTokens(object? tokenObj)

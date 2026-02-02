@@ -55,24 +55,25 @@
       <Separator />
 
       <!-- Query -->
-      <TextBlock Text="Query" FontWeight="SemiBold" />
-      <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
-        <SelectableTextBlock Text="{Binding QueryText}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
-      </Border>
+      <Expander Header="Query" IsExpanded="True">
+        <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
+          <SelectableTextBlock Text="{Binding QueryText}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
+        </Border>
+      </Expander>
 
       <!-- Response -->
-      <TextBlock Text="Response" FontWeight="SemiBold" />
-      <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
-        <SelectableTextBlock Text="{Binding Response}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
-      </Border>
+      <Expander Header="Response" IsExpanded="True">
+        <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
+          <SelectableTextBlock Text="{Binding Response}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
+        </Border>
+      </Expander>
 
       <!-- Interpretation (if present) -->
-      <StackPanel IsVisible="{Binding Interpretation, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-          <TextBlock Text="Interpretation" FontWeight="SemiBold" Margin="0,10,0,0"/>
-          <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#F0F8FF">
-            <SelectableTextBlock Text="{Binding Interpretation}" TextWrapping="Wrap" FontFamily="Segoe UI, Sans-Serif" Foreground="Black" />
-          </Border>
-      </StackPanel>
+      <Expander Header="Interpretation" IsExpanded="True" IsVisible="{Binding Interpretation, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+        <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#F0F8FF">
+          <SelectableTextBlock Text="{Binding Interpretation}" TextWrapping="Wrap" FontFamily="Segoe UI, Sans-Serif" Foreground="Black" />
+        </Border>
+      </Expander>
 
       <!-- Actions Grid (if present) -->
       <StackPanel IsVisible="{Binding HasActions}">
