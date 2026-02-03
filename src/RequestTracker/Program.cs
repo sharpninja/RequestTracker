@@ -1,6 +1,5 @@
-﻿using Avalonia;
+using Avalonia;
 using System;
-using Avalonia.WebView.Desktop;
 
 namespace RequestTracker;
 
@@ -29,6 +28,5 @@ sealed class Program
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
-            .UseDesktopWebView()
             .LogToTrace();
 }

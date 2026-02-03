@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace RequestTracker.Models.Json
 {
@@ -16,8 +18,10 @@ namespace RequestTracker.Models.Json
         public DateTime? LastUpdated { get; set; }
         public string Status { get; set; } = "";
 
-        // Unified Stats
+        // Unified Stats (converter allows number/string from JSON, e.g. totalTokens as double)
+        [JsonConverter(typeof(FlexibleInt32Converter))]
         public int EntryCount { get; set; }
+        [JsonConverter(typeof(FlexibleInt32Converter))]
         public int TotalTokens { get; set; }
 
         public WorkspaceInfo? Workspace { get; set; }
@@ -33,8 +37,20 @@ namespace RequestTracker.Models.Json
     {
         public string RequestId { get; set; } = "";
         public DateTime? Timestamp { get; set; }
+
+        /// <summary>Timestamp in local time for display (short date/time).</summary>
+        public string TimestampLocalDisplay => Timestamp.HasValue ? ToLocalTime(Timestamp.Value).ToString("g") : "";
+
+        private static DateTime ToLocalTime(DateTime dt)
+        {
+            if (dt.Kind == DateTimeKind.Local) return dt;
+            if (dt.Kind == DateTimeKind.Utc) return dt.ToLocalTime();
+            return DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
+        }
+
         public string Model { get; set; } = "";
         public string ModelProvider { get; set; } = "";
+        public string Agent { get; set; } = "";
 
         // Unified Query/Response
         public string QueryText { get; set; } = "";
@@ -61,7 +77,8 @@ namespace RequestTracker.Models.Json
 
         public bool HasActions => Actions?.Count > 0;
 
-        // Original Source Object (for JSON viewer)
+        /// <summary>Original source object for the "Original JSON" viewer. Not serialized to avoid object cycle when building the JSON tree.</summary>
+        [JsonIgnore]
         public object? OriginalEntry { get; set; }
     }
 
@@ -77,8 +94,44 @@ namespace RequestTracker.Models.Json
         public string PipeDelimitedLine => $"{Order} | {Type} | {Description} | {Status} | {FilePath}";
     }
 
+    /// <summary>Export path and content for the unified model JSON schema.</summary>
+    public static class UnifiedSchemaExport
+    {
+        /// <summary>Filename of the schema when copied to output (UnifiedModel.schema.json).</summary>
+        public const string SchemaFileName = "UnifiedModel.schema.json";
+
+        /// <summary>Gets the path to the schema file in the application directory (when deployed).</summary>
+        public static string GetSchemaPath()
+        {
+            return Path.Combine(AppContext.BaseDirectory, SchemaFileName);
+        }
+
+        /// <summary>Gets the JSON schema content for the unified model, or null if the file is not found.</summary>
+        public static string? GetSchemaContent()
+        {
+            var path = GetSchemaPath();
+            if (!File.Exists(path)) return null;
+            return File.ReadAllText(path);
+        }
+    }
+
     public static class UnifiedLogFactory
     {
+        /// <summary>Ensures entries have OriginalEntry set and Agent set from log SourceType when empty (e.g. when loaded from unified-format file).</summary>
+        public static void EnsureOriginalEntriesSet(UnifiedSessionLog? log)
+        {
+            if (log?.Entries == null) return;
+            var agentFromLog = string.IsNullOrWhiteSpace(log.SourceType) ? "Unknown" : log.SourceType.Trim();
+            foreach (var entry in log.Entries)
+            {
+                if (entry == null) continue;
+                if (entry.OriginalEntry == null)
+                    entry.OriginalEntry = entry;
+                if (string.IsNullOrWhiteSpace(entry.Agent))
+                    entry.Agent = agentFromLog;
+            }
+        }
+
         public static UnifiedSessionLog Create(CopilotSessionLog log)
         {
             var u = new UnifiedSessionLog
@@ -109,6 +162,7 @@ namespace RequestTracker.Models.Json
                         Timestamp = r.Timestamp,
                         Model = r.Model,
                         ModelProvider = r.ModelProvider,
+                        Agent = "Copilot",
 
                         QueryText = r.UserRequest,
                         QueryTitle = !string.IsNullOrEmpty(r.Title) ? r.Title : r.Slug,
@@ -174,6 +228,7 @@ namespace RequestTracker.Models.Json
                         RequestId = r.RequestId,
                         Timestamp = ts,
                         Model = r.Model,
+                        Agent = "Cursor",
 
                         QueryText = r.ExactRequest,
                         QueryTitle = r.ExactRequestNote,

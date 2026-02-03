@@ -5,8 +5,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -20,7 +23,13 @@ namespace RequestTracker.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {
-    private const string TargetPath = @"E:\github\FunWasHad\docs\requests";
+    private const string TargetPath = @"E:\github\FunWasHad\docs\sessions";
+
+    private static readonly JsonSerializerOptions CopilotJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new WorkspaceInfoConverter() }
+    };
 
     /// <summary>
     /// Target path resolved for the current OS (Windows path on Windows, /mnt/... on Linux).
@@ -34,10 +43,11 @@ public partial class MainWindowViewModel : ViewModelBase
     private ObservableCollection<FileNode> _nodes = new();
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedNodePathDisplay))]
     private FileNode? _selectedNode;
 
-    [ObservableProperty]
-    private Uri? _htmlSource;
+    /// <summary>Null-safe path for binding (avoids 'Value is null' when SelectedNode is null).</summary>
+    public string SelectedNodePathDisplay => SelectedNode?.Path ?? "";
 
     [ObservableProperty]
     private ObservableCollection<string> _changeLog = new();
@@ -67,6 +77,37 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _searchQuery = "";
 
     [ObservableProperty]
+    private string _requestIdFilter = "";
+
+    [ObservableProperty]
+    private string _displayFilter = "";
+
+    [ObservableProperty]
+    private string _modelFilter = "";
+
+    [ObservableProperty]
+    private string _timestampFilter = "";
+
+    [ObservableProperty]
+    private string _agentFilter = "";
+
+    /// <summary>Distinct values for filter ComboBoxes (includes "" for "All").</summary>
+    [ObservableProperty]
+    private ObservableCollection<string> _distinctRequestIds = new() { "" };
+
+    [ObservableProperty]
+    private ObservableCollection<string> _distinctDisplayTexts = new() { "" };
+
+    [ObservableProperty]
+    private ObservableCollection<string> _distinctModels = new() { "" };
+
+    [ObservableProperty]
+    private ObservableCollection<string> _distinctAgents = new() { "" };
+
+    [ObservableProperty]
+    private ObservableCollection<string> _distinctTimestamps = new() { "" };
+
+    [ObservableProperty]
     private ObservableCollection<SearchableEntry> _filteredSearchEntries = new();
 
     [ObservableProperty]
@@ -78,17 +119,33 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private string _statusMessage = "";
 
-    /// <summary>
-    /// True on Windows; false on Linux to avoid WebView creating a separate GTK window and blocking the main app window.
-    /// </summary>
-    public bool IsWebViewSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    /// <summary>True when markdown preview was opened in the system browser.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowMarkdownLoadingPlaceholder))]
+    private bool _isPreviewOpenedInBrowser;
 
-    /// <summary>
-    /// True when WebView is not used (Linux); show placeholder instead.
-    /// </summary>
-    public bool IsWebViewPlaceholderVisible => !IsWebViewSupported;
+    /// <summary>True when markdown is selected but preview not yet loaded (show loading message).</summary>
+    public bool ShowMarkdownLoadingPlaceholder => !IsPreviewOpenedInBrowser;
+
+    /// <summary>Path to the current preview HTML file (for "Open in browser" button).</summary>
+    [ObservableProperty]
+    private string? _currentPreviewHtmlPath;
+
+    /// <summary>Raw markdown of the selected file when preview is opened externally.</summary>
+    [ObservableProperty]
+    private string _currentPreviewMarkdownText = "";
 
     private string? _currentMarkdownPath;
+
+    private CancellationTokenSource? _markdownPreviewCts;
+
+    /// <summary>Cancels any in-flight markdown preview task (e.g. pandoc generation).</summary>
+    public void CancelMarkdownPreview()
+    {
+        _markdownPreviewCts?.Cancel();
+        _markdownPreviewCts?.Dispose();
+        _markdownPreviewCts = null;
+    }
 
     // Navigation History
     private readonly Stack<FileNode> _backStack = new();
@@ -102,14 +159,68 @@ public partial class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel(IClipboardService clipboardService)
     {
         _clipboardService = clipboardService;
-        InitializeTree();
-        SetupWatcher();
+        // InitializeTree and SetupWatcher run in InitializeAfterWindowShown() when the window is opened,
+        // so the window displays even if file system or watcher setup fails.
+    }
+
+    /// <summary>Called by MainWindow when it has opened. Builds the file tree off the UI thread and applies on UI; starts the watcher.</summary>
+    public void InitializeAfterWindowShown()
+    {
+        DispatchToUi(() => StatusMessage = "Loading file tree...");
+        Task.Run(() =>
+        {
+            try
+            {
+                OllamaLogAgentService.TryStartOllamaIfNeeded();
+
+                string resolvedPath = GetResolvedTargetPath();
+                var (allJsonNode, rootDto) = BuildTreeOffThread(resolvedPath);
+                SetupWatcher(); // lightweight; can run on background
+                DispatchToUi(() =>
+                {
+                    try
+                    {
+                        Nodes.Clear();
+                        Nodes.Add(allJsonNode);
+                        if (rootDto != null)
+                        {
+                            var root = ApplyTreeDtoToNodes(rootDto);
+                            Nodes.Add(root);
+                            SelectedNode = allJsonNode;
+                            SetStatus($"Loaded: {resolvedPath}");
+                        }
+                        else
+                        {
+                            Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
+                            SelectedNode = allJsonNode;
+                            SetStatus($"Directory not found: {resolvedPath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"ApplyTreeDto failed: {ex}");
+                        SetStatus($"Error: {ex.Message}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"InitializeAfterWindowShown failed: {ex}");
+                DispatchToUi(() => SetStatus($"Failed to load tree: {ex.Message}"));
+            }
+        });
     }
 
     partial void OnSearchQueryChanged(string value)
     {
         UpdateFilteredSearchEntries();
     }
+
+    partial void OnRequestIdFilterChanged(string value) => UpdateFilteredSearchEntries();
+    partial void OnDisplayFilterChanged(string value) => UpdateFilteredSearchEntries();
+    partial void OnModelFilterChanged(string value) => UpdateFilteredSearchEntries();
+    partial void OnTimestampFilterChanged(string value) => UpdateFilteredSearchEntries();
+    partial void OnAgentFilterChanged(string value) => UpdateFilteredSearchEntries();
 
     partial void OnSelectedSearchEntryChanged(SearchableEntry? value)
     {
@@ -125,20 +236,46 @@ public partial class MainWindowViewModel : ViewModelBase
     private void UpdateFilteredSearchEntries()
     {
         var q = (SearchQuery ?? "").Trim();
-        if (string.IsNullOrEmpty(q))
+        var rid = (RequestIdFilter ?? "").Trim().ToLowerInvariant();
+        var disp = (DisplayFilter ?? "").Trim().ToLowerInvariant();
+        var mod = (ModelFilter ?? "").Trim().ToLowerInvariant();
+        var ts = (TimestampFilter ?? "").Trim().ToLowerInvariant();
+
+        IEnumerable<SearchableEntry> filtered = SearchableEntries;
+
+        if (!string.IsNullOrEmpty(q))
         {
-            FilteredSearchEntries = new ObservableCollection<SearchableEntry>(SearchableEntries);
-            return;
+            var lower = q.ToLowerInvariant();
+            filtered = filtered.Where(e => (e.SearchText ?? "").ToLowerInvariant().Contains(lower) ||
+                                          (e.RequestId ?? "").ToLowerInvariant().Contains(lower) ||
+                                          (e.DisplayText ?? "").ToLowerInvariant().Contains(lower) ||
+                                          (e.Model ?? "").ToLowerInvariant().Contains(lower) ||
+                                          (e.Agent ?? "").ToLowerInvariant().Contains(lower) ||
+                                          (e.Timestamp ?? "").ToLowerInvariant().Contains(lower));
         }
-        var lower = q.ToLowerInvariant();
-        var filtered = SearchableEntries
-            .Where(e => (e.SearchText ?? "").ToLowerInvariant().Contains(lower) ||
-                        (e.RequestId ?? "").ToLowerInvariant().Contains(lower) ||
-                        (e.DisplayText ?? "").ToLowerInvariant().Contains(lower) ||
-                        (e.Model ?? "").ToLowerInvariant().Contains(lower) ||
-                        (e.Timestamp ?? "").ToLowerInvariant().Contains(lower))
-            .ToList();
-        FilteredSearchEntries = new ObservableCollection<SearchableEntry>(filtered);
+        if (!string.IsNullOrEmpty(rid))
+            filtered = filtered.Where(e => string.Equals(e.RequestId ?? "", rid, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(disp))
+            filtered = filtered.Where(e => string.Equals(e.DisplayText ?? "", disp, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(mod))
+            filtered = filtered.Where(e => string.Equals(e.Model ?? "", mod, StringComparison.OrdinalIgnoreCase));
+        var agent = (AgentFilter ?? "").Trim().ToLowerInvariant();
+        if (!string.IsNullOrEmpty(agent))
+            filtered = filtered.Where(e => string.Equals(e.Agent ?? "", agent, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(ts))
+            filtered = filtered.Where(e => string.Equals(e.TimestampDisplay ?? "", ts, StringComparison.OrdinalIgnoreCase) ||
+                                            string.Equals(e.Timestamp ?? "", ts, StringComparison.OrdinalIgnoreCase));
+
+        var sorted = filtered.OrderByDescending(e => e.SortableTimestamp ?? DateTime.MinValue).ToList();
+        FilteredSearchEntries = new ObservableCollection<SearchableEntry>(sorted);
+
+        if (IsRequestDetailsVisible)
+        {
+            NavigateToPreviousRequestCommand.NotifyCanExecuteChanged();
+            NavigateToNextRequestCommand.NotifyCanExecuteChanged();
+        }
+
+        NotifyContextConsumer();
     }
 
     [RelayCommand(CanExecute = nameof(CanNavigateBack))]
@@ -234,7 +371,124 @@ public partial class MainWindowViewModel : ViewModelBase
             IsMarkdownVisible = false;
             IsJsonVisible = false;
             IsRequestDetailsVisible = true;
+            ArchiveCommand.NotifyCanExecuteChanged();
+            NavigateToPreviousRequestCommand.NotifyCanExecuteChanged();
+            NavigateToNextRequestCommand.NotifyCanExecuteChanged();
+            NotifyContextConsumer();
         }
+    }
+
+    /// <summary>Navigates to the request details view for the currently selected search entry (e.g. on double-click).</summary>
+    public void TryNavigateToSelectedSearchEntry()
+    {
+        if (SelectedSearchEntry is { } e && e.UnifiedEntry != null)
+            ShowRequestDetails(e);
+    }
+
+    /// <summary>Called when the chat window is open; we push current context so the agent stays in sync with navigation.</summary>
+    private Action<string>? _contextConsumer;
+
+    /// <summary>Register or clear the context consumer (chat window). When set, we call it when the user navigates to JSON or details.</summary>
+    public void SetContextConsumer(Action<string>? consumer) => _contextConsumer = consumer;
+
+    private void NotifyContextConsumer()
+    {
+        if (_contextConsumer == null) return;
+        try
+        {
+            var ctx = GetLogContextForAgent();
+            _contextConsumer(ctx);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"NotifyContextConsumer: {ex.Message}");
+        }
+    }
+
+    /// <summary>Builds a short summary of the current log view for the AI assistant (filtered entries and selected request). Includes agent config file content when present.</summary>
+    public string GetLogContextForAgent()
+    {
+        var entries = FilteredSearchEntries ?? SearchableEntries;
+        var sb = new StringBuilder();
+
+        var agentConfig = AgentConfigIo.ReadContent();
+        if (!string.IsNullOrWhiteSpace(agentConfig))
+        {
+            sb.AppendLine("--- Agent instructions (from agent_config.md) ---");
+            sb.AppendLine(agentConfig.Trim());
+            sb.AppendLine();
+        }
+
+        // Navigation context: what the user is currently viewing
+        if (IsRequestDetailsVisible)
+            sb.AppendLine("Navigation: Request details view (one request selected).");
+        else if (IsJsonVisible && SelectedNode != null)
+            sb.AppendLine(SelectedNode.Path == "ALL_JSON_VIRTUAL_NODE"
+                ? "Navigation: All JSON (aggregated log from all files)."
+                : $"Navigation: JSON file: {SelectedNode.Path}");
+        else if (IsMarkdownVisible && !string.IsNullOrEmpty(_currentMarkdownPath))
+            sb.AppendLine($"Navigation: Markdown: {_currentMarkdownPath}");
+        else
+            sb.AppendLine("Navigation: (list or loading)");
+        sb.AppendLine();
+
+        if (entries == null || entries.Count == 0)
+        {
+            sb.AppendLine("(No log loaded or no entries in current view.)");
+            return sb.ToString();
+        }
+        sb.AppendLine($"Current view: {entries.Count} request(s).");
+        sb.AppendLine("Columns: RequestId | DisplayText | Model | Agent | Timestamp");
+        int take = Math.Min(50, entries.Count);
+        for (int i = 0; i < take; i++)
+        {
+            var e = entries[i];
+            sb.AppendLine($"  {e.RequestId} | {TruncateForContext(e.DisplayText, 60)} | {e.Model} | {e.Agent} | {e.TimestampDisplay}");
+        }
+        if (entries.Count > take)
+            sb.AppendLine($"  ... and {entries.Count - take} more.");
+        if (SelectedUnifiedRequest != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Selected request:");
+            var r = SelectedUnifiedRequest;
+            sb.AppendLine($"  RequestId: {r.RequestId}; Model: {r.Model}; Agent: {r.Agent}; Status: {r.Status}");
+            if (!string.IsNullOrWhiteSpace(r.QueryTitle)) sb.AppendLine($"  Title: {r.QueryTitle}");
+            if (!string.IsNullOrWhiteSpace(r.QueryText)) sb.AppendLine($"  Query: {TruncateForContext(r.QueryText, 200)}");
+        }
+        return sb.ToString();
+    }
+
+    private static string TruncateForContext(string s, int maxLen)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        s = s.Replace("\r", " ").Replace("\n", " ");
+        return s.Length <= maxLen ? s : s.AsSpan(0, maxLen).ToString() + "...";
+    }
+
+    /// <summary>If the given path matches a request/entry (e.g. "entries[0]", "requests[1]"), navigates to that request's detail view. Returns true if navigation occurred.</summary>
+    public bool TryNavigateToDetailsForSourcePath(string? sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath)) return false;
+        var entries = FilteredSearchEntries ?? SearchableEntries;
+        if (entries == null) return false;
+        foreach (var entry in entries)
+        {
+            if (string.Equals(entry.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase) && entry.UnifiedEntry != null)
+            {
+                SelectedSearchEntry = entry;
+                ShowRequestDetails(entry);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [RelayCommand]
+    private void SelectSearchEntry(SearchableEntry entry)
+    {
+        if (entry != null)
+            SelectedSearchEntry = entry;
     }
 
     [RelayCommand]
@@ -243,6 +497,57 @@ public partial class MainWindowViewModel : ViewModelBase
         IsRequestDetailsVisible = false;
         IsJsonVisible = true;
         IsMarkdownVisible = false;
+        ArchiveCommand.NotifyCanExecuteChanged();
+        NotifyContextConsumer();
+    }
+
+    private int GetCurrentRequestIndexInFilteredList()
+    {
+        if (SelectedUnifiedRequest == null || FilteredSearchEntries == null || FilteredSearchEntries.Count == 0)
+            return -1;
+        for (int i = 0; i < FilteredSearchEntries.Count; i++)
+        {
+            if (FilteredSearchEntries[i].UnifiedEntry == SelectedUnifiedRequest)
+                return i;
+        }
+        return -1;
+    }
+
+    private bool CanNavigateToPreviousRequest()
+    {
+        return GetCurrentRequestIndexInFilteredList() > 0;
+    }
+
+    private bool CanNavigateToNextRequest()
+    {
+        int i = GetCurrentRequestIndexInFilteredList();
+        return i >= 0 && i < FilteredSearchEntries.Count - 1;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanNavigateToPreviousRequest))]
+    private void NavigateToPreviousRequest()
+    {
+        int i = GetCurrentRequestIndexInFilteredList();
+        if (i <= 0) return;
+        var entry = FilteredSearchEntries[i - 1];
+        if (entry?.UnifiedEntry == null) return;
+        SelectedSearchEntry = entry;
+        ShowRequestDetails(entry);
+        NavigateToPreviousRequestCommand.NotifyCanExecuteChanged();
+        NavigateToNextRequestCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanNavigateToNextRequest))]
+    private void NavigateToNextRequest()
+    {
+        int i = GetCurrentRequestIndexInFilteredList();
+        if (i < 0 || i >= FilteredSearchEntries.Count - 1) return;
+        var entry = FilteredSearchEntries[i + 1];
+        if (entry?.UnifiedEntry == null) return;
+        SelectedSearchEntry = entry;
+        ShowRequestDetails(entry);
+        NavigateToPreviousRequestCommand.NotifyCanExecuteChanged();
+        NavigateToNextRequestCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnSelectedNodeChanging(FileNode? value)
@@ -278,23 +583,6 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    public bool ShouldInterceptNavigation(Uri url)
-    {
-        if (url.Scheme == "file")
-        {
-            string path = url.LocalPath;
-            if (path.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) return false;
-
-            if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleNavigation(path);
-                return true;
-            }
-        }
-        return false;
-    }
-
     public void HandleNavigation(string path)
     {
         // Path might be the resolved path in the temp directory, e.g., C:\Users\...\Temp\RequestTracker_Cache\next.md
@@ -318,9 +606,9 @@ public partial class MainWindowViewModel : ViewModelBase
         if (currentDir == null) return;
 
         // Try to handle navigation relative to the current markdown file's directory
-        // The path coming from WebView might be absolute in temp dir
+        // The path might be absolute (e.g. temp dir) or relative
         // e.g. C:\Users\kingd\AppData\Local\Temp\RequestTracker_Cache\copilot\session-2026-02-02-073300\session-log.md
-        // But we want to map it to E:\github\FunWasHad\docs\requests\copilot\session-2026-02-02-073300\session-log.md
+        // But we want to map it to E:\github\FunWasHad\docs\sessions\copilot\session-2026-02-02-073300\session-log.md
 
         // If the path contains "RequestTracker_Cache", we should try to extract the relative part
         // But since we flatten the cache (or do we?), wait, let's check GenerateAndNavigate.
@@ -460,8 +748,22 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
 
+    /// <summary>Dispatches an action to the UI thread. Use for any property/collection updates from background work.</summary>
+    private void DispatchToUi(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+            action();
+        else
+            Dispatcher.UIThread.Post(() => action());
+    }
+
     private void GenerateAndNavigate(FileNode? node)
     {
+         CancelMarkdownPreview();
+         IsPreviewOpenedInBrowser = false;
+         CurrentPreviewHtmlPath = null;
+         CurrentPreviewMarkdownText = "";
+
          // Reset details view
          IsRequestDetailsVisible = false;
 
@@ -474,6 +776,7 @@ public partial class MainWindowViewModel : ViewModelBase
          {
              IsMarkdownVisible = false;
              IsJsonVisible = true;
+             ArchiveCommand.NotifyCanExecuteChanged();
              LoadAllJson();
              return;
          }
@@ -484,6 +787,7 @@ public partial class MainWindowViewModel : ViewModelBase
          {
              IsMarkdownVisible = false;
              IsJsonVisible = true;
+             ArchiveCommand.NotifyCanExecuteChanged();
              LoadJson(node.Path);
              return;
          }
@@ -493,53 +797,123 @@ public partial class MainWindowViewModel : ViewModelBase
              IsMarkdownVisible = true;
              IsJsonVisible = false;
              _currentMarkdownPath = node.Path;
+             ArchiveCommand.NotifyCanExecuteChanged();
+             NotifyContextConsumer();
 
-             // Check if we already generated it and it's up to date?
-         string hash = node.Path.GetHashCode().ToString("X");
-         string tempFileName = $"{Path.GetFileNameWithoutExtension(node.Path)}_{hash}.html";
-         string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
-         string tempPath = Path.Combine(tempDir, tempFileName);
+             string hash = node.Path.GetHashCode().ToString("X");
+             string tempFileName = $"{Path.GetFileNameWithoutExtension(node.Path)}_{hash}.html";
+             string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
+             string tempPath = Path.Combine(tempDir, tempFileName);
+             Directory.CreateDirectory(tempDir);
 
-         Directory.CreateDirectory(tempDir);
+             bool needsGeneration = true;
+             if (File.Exists(tempPath))
+             {
+                 var srcTime = File.GetLastWriteTimeUtc(node.Path);
+                 var dstTime = File.GetLastWriteTimeUtc(tempPath);
+                 if (srcTime < dstTime) needsGeneration = false;
+             }
 
-         bool needsGeneration = true;
-         if (File.Exists(tempPath))
-         {
-             // Check modification time
-             var srcTime = File.GetLastWriteTimeUtc(node.Path);
-             var dstTime = File.GetLastWriteTimeUtc(tempPath);
-             // If source is older than dest, we are good.
-             if (srcTime < dstTime) needsGeneration = false;
+             DispatchToUi(() => StatusMessage = needsGeneration ? "Generating preview..." : "Loading preview...");
+
+             _markdownPreviewCts?.Dispose();
+             _markdownPreviewCts = new CancellationTokenSource();
+             var token = _markdownPreviewCts.Token;
+             string pathForThisPreview = node.Path;
+
+             _ = Task.Run(async () =>
+             {
+                 try
+                 {
+                     if (needsGeneration)
+                     {
+                         Console.WriteLine($"Generating HTML for {pathForThisPreview}...");
+                         bool ok = await ConvertMarkdownToHtmlAsync(pathForThisPreview, tempPath);
+                         if (token.IsCancellationRequested) return;
+                         if (!ok)
+                         {
+                             DispatchToUi(() =>
+                             {
+                                 if (token.IsCancellationRequested) return;
+                                 Console.WriteLine("Failed to generate HTML");
+                                 SetFallbackHtmlSource("Markdown preview unavailable. Install <a href=\"https://pandoc.org/\">pandoc</a> to generate HTML preview.");
+                             });
+                             return;
+                         }
+                         Console.WriteLine($"Generated: {tempPath}");
+                     }
+
+                     if (token.IsCancellationRequested) return;
+
+                     string html = await File.ReadAllTextAsync(tempPath);
+                     string pathForBrowser = tempPath;
+                     string markdownText = "";
+                     try
+                     {
+                         markdownText = await File.ReadAllTextAsync(pathForThisPreview);
+                     }
+                     catch
+                     {
+                         // Ignore; we'll show empty if file can't be read
+                     }
+
+                     if (token.IsCancellationRequested) return;
+
+                     DispatchToUi(() =>
+                     {
+                         if (token.IsCancellationRequested) return;
+                         if (_currentMarkdownPath != pathForThisPreview) return;
+
+                         try
+                         {
+                             if (string.IsNullOrWhiteSpace(html))
+                             {
+                                 SetFallbackHtmlSource("Generated HTML was empty.");
+                                 return;
+                             }
+                             CurrentPreviewHtmlPath = pathForBrowser;
+                             CurrentPreviewMarkdownText = markdownText ?? "";
+                             IsPreviewOpenedInBrowser = true;
+                         }
+                         catch (Exception ex)
+                         {
+                             Console.WriteLine($"Error loading HTML: {ex.Message}");
+                             SetFallbackHtmlSource("Could not load preview.");
+                         }
+                     });
+                 }
+                 catch (OperationCanceledException)
+                 {
+                     // Task was cancelled (e.g. user navigated away)
+                 }
+                 catch (Exception ex)
+                 {
+                     if (!token.IsCancellationRequested)
+                     {
+                         Console.WriteLine($"Error generating preview: {ex.Message}");
+                         DispatchToUi(() => SetFallbackHtmlSource("Could not load preview."));
+                     }
+                 }
+             });
+             return;
          }
+    }
 
-         if (needsGeneration)
-         {
-            Console.WriteLine($"Generating HTML for {node.Path}...");
-            if (ConvertMarkdownToHtml(node.Path, tempPath))
+    /// <summary>Removes duplicate entries by RequestId (case-insensitive). Keeps the first occurrence when ordered by timestamp descending (newest wins). Entries with empty RequestId are not deduplicated.</summary>
+    private static List<UnifiedRequestEntry> DeduplicateUnifiedEntries(List<UnifiedRequestEntry> orderedByNewestFirst)
+    {
+        var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<UnifiedRequestEntry>();
+        foreach (var e in orderedByNewestFirst)
+        {
+            if (!string.IsNullOrWhiteSpace(e.RequestId))
             {
-                 Console.WriteLine($"Generated: {tempPath}");
+                if (!seenIds.Add(e.RequestId.Trim()))
+                    continue;
             }
-            else
-            {
-                Console.WriteLine("Failed to generate HTML");
-                return;
-            }
-         }
-         else
-         {
-             Console.WriteLine($"Using cached HTML for {node.Path}");
-         }
-
-         // Force reload if needed by appending timestamp or just new Uri
-         HtmlSource = new Uri($"file:///{tempPath.Replace('\\', '/')}");
-
-         // Per Avalonia docs: on Linux use a separate window/dialog for web content (NativeWebView is unsupported).
-         // With current WebView.Avalonia we open the HTML in the system default browser so preview works in WSL/WSLg.
-         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-         {
-             OpenHtmlInDefaultBrowser(tempPath);
-         }
-         }
+            result.Add(e);
+        }
+        return result;
     }
 
     private void LoadAllJson()
@@ -551,9 +925,8 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        StatusMessage = "Aggregating all JSON files...";
+        DispatchToUi(() => StatusMessage = "Aggregating all JSON files...");
 
-        // Use a safe wrapper to catch background exceptions
         Task.Run(async () =>
         {
             try
@@ -561,48 +934,51 @@ public partial class MainWindowViewModel : ViewModelBase
                 var jsonFiles = Directory.GetFiles(rootPath, "*.json", SearchOption.AllDirectories);
                 var unifiedLogs = new List<UnifiedSessionLog>();
                 int totalRequests = 0;
+                int totalFiles = jsonFiles.Length;
+                int processed = 0;
 
                 foreach (var file in jsonFiles)
                 {
                     try
                     {
                         var text = await File.ReadAllTextAsync(file);
-
-                        // Try Copilot first
-                        try
+                        var (unified, count) = TryParseFileToUnifiedLog(text);
+                        if (unified != null && count >= 0)
                         {
-                            var copilotLog = JsonSerializer.Deserialize<CopilotSessionLog>(text, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                            if (copilotLog?.Requests != null)
-                            {
-                                var unified = UnifiedLogFactory.Create(copilotLog);
-                                unifiedLogs.Add(unified);
-                                totalRequests += unified.EntryCount;
-                                continue;
-                            }
+                            unifiedLogs.Add(unified);
+                            totalRequests += count;
                         }
-                        catch {}
-
-                        // Try Cursor
-                        try
-                        {
-                            var cursorLog = JsonSerializer.Deserialize<CursorRequestLog>(text, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                            if (cursorLog?.Entries != null)
-                            {
-                                 var unified = UnifiedLogFactory.Create(cursorLog);
-                                 unifiedLogs.Add(unified);
-                                 totalRequests += unified.EntryCount;
-                                 continue;
-                            }
-                        }
-                        catch {}
                     }
                     catch
                     {
                         // Skip unreadable files
                     }
+                    finally
+                    {
+                        processed++;
+                        if (totalFiles > 0 && (processed % 5 == 0 || processed == totalFiles))
+                        {
+                            var p = processed;
+                            var t = totalFiles;
+                            DispatchToUi(() => StatusMessage = $"Reading files... {p}/{t}");
+                        }
+                    }
                 }
 
-                // Aggregate into a single master log
+                foreach (var log in unifiedLogs)
+                {
+                    var agent = string.IsNullOrWhiteSpace(log.SourceType) ? "Unknown" : log.SourceType.Trim();
+                    if (log.Entries == null) continue;
+                    foreach (var entry in log.Entries)
+                    {
+                        if (entry != null && string.IsNullOrWhiteSpace(entry.Agent))
+                            entry.Agent = agent;
+                    }
+                }
+
+                var allEntries = unifiedLogs.SelectMany(l => l.Entries).OrderByDescending(e => e.Timestamp).ToList();
+                var deduped = DeduplicateUnifiedEntries(allEntries);
+
                 var masterLog = new UnifiedSessionLog
                 {
                     SourceType = "Aggregated",
@@ -611,18 +987,19 @@ public partial class MainWindowViewModel : ViewModelBase
                     Model = "Various",
                     Started = DateTime.Now,
                     Status = "Aggregated",
-                    EntryCount = totalRequests,
-                    Entries = unifiedLogs.SelectMany(l => l.Entries).OrderByDescending(e => e.Timestamp).ToList(),
+                    EntryCount = deduped.Count,
+                    Entries = deduped,
                     TotalTokens = unifiedLogs.Sum(l => l.TotalTokens)
                 };
 
-                // Update UI on main thread
-                Dispatcher.UIThread.Post(() =>
+                var reqCount = deduped.Count;
+                var fileCount = jsonFiles.Length;
+                DispatchToUi(() =>
                 {
                     try
                     {
                         BuildUnifiedSummaryAndIndex(masterLog);
-                        StatusMessage = $"Loaded {totalRequests} requests from {jsonFiles.Length} files.";
+                        StatusMessage = $"Loaded {reqCount} requests from {fileCount} files.";
                     }
                     catch (Exception ex)
                     {
@@ -633,15 +1010,16 @@ public partial class MainWindowViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                Dispatcher.UIThread.Post(() => StatusMessage = $"Error aggregating JSON: {ex.Message}");
+                var msg = ex.Message;
+                DispatchToUi(() => StatusMessage = $"Error aggregating JSON: {msg}");
                 Console.WriteLine($"Aggregation Error: {ex}");
             }
         });
     }
 
     /// <summary>
-    /// Opens an HTML file in the system default browser. Used on Linux/WSL where embedded WebView is unsupported
-    /// (per Avalonia docs: use NativeWebDialog or a separate window on Linux; we use xdg-open as a workaround).
+    /// Opens an HTML file in the system default browser.
+    /// Opens the generated HTML in the default browser (pandoc output).
     /// </summary>
     private static void OpenHtmlInDefaultBrowser(string htmlFilePath)
     {
@@ -649,14 +1027,26 @@ public partial class MainWindowViewModel : ViewModelBase
         try
         {
             var path = Path.GetFullPath(htmlFilePath);
-            var psi = new ProcessStartInfo
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                FileName = "xdg-open",
-                Arguments = path,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            Process.Start(psi);
+                var psi = new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                };
+                Process.Start(psi);
+            }
+            else
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "xdg-open",
+                    Arguments = path,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                Process.Start(psi);
+            }
         }
         catch (Exception ex)
         {
@@ -664,36 +1054,184 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand]
+    private void OpenPreviewInBrowser()
+    {
+        if (!string.IsNullOrEmpty(CurrentPreviewHtmlPath))
+            OpenHtmlInDefaultBrowser(CurrentPreviewHtmlPath);
+    }
+
+    [RelayCommand]
+    private void OpenAgentConfig()
+    {
+        AgentConfigIo.EnsureExists();
+        OpenFileInDefaultEditor(AgentConfigIo.GetFilePath(), "config");
+    }
+
+    [RelayCommand]
+    private void OpenPromptTemplates()
+    {
+        PromptTemplatesIo.EnsureExists();
+        OpenFileInDefaultEditor(PromptTemplatesIo.GetFilePath(), "prompts");
+    }
+
+    private void OpenFileInDefaultEditor(string path, string label)
+    {
+        if (!File.Exists(path))
+        {
+            SetStatus($"Could not open {label}: file not found.");
+            return;
+        }
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // Use cmd /c start so the file reliably opens with the default app (Process.Start with
+                // the file path can succeed without opening when launched from IDE or certain contexts).
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c start \"\" \"{fullPath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+            }
+            else
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "xdg-open",
+                    Arguments = fullPath,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+            }
+            SetStatus($"Opened {label}: {path}");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not open {label}: {ex.Message}");
+        }
+    }
+
+    private bool CanArchive() =>
+        _currentMarkdownPath != null &&
+        File.Exists(_currentMarkdownPath) &&
+        IsMarkdownVisible &&
+        !IsArchivedName(Path.GetFileName(_currentMarkdownPath));
+
+    [RelayCommand(CanExecute = nameof(CanArchive))]
+    private void Archive()
+    {
+        string? path = _currentMarkdownPath;
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+        string? dir = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(dir)) return;
+        string name = Path.GetFileName(path);
+        string newName = "Archived-" + name;
+        string newPath = Path.Combine(dir, newName);
+        Task.Run(() =>
+        {
+            try
+            {
+                File.Move(path, newPath);
+                DispatchToUi(() =>
+                {
+                    _currentMarkdownPath = null;
+                    RebuildFileTree();
+                    ArchiveCommand.NotifyCanExecuteChanged();
+                    StatusMessage = $"Archived: {newName}";
+                });
+            }
+            catch (Exception ex)
+            {
+                DispatchToUi(() =>
+                {
+                    StatusMessage = $"Archive failed: {ex.Message}";
+                    ArchiveCommand.NotifyCanExecuteChanged();
+                });
+            }
+        });
+    }
+
+    /// <summary>Rebuilds the file tree on a background thread and applies on UI; selects All JSON.</summary>
+    private void RebuildFileTree()
+    {
+        string resolvedPath = GetResolvedTargetPath();
+        Task.Run(() =>
+        {
+            try
+            {
+                var (allJsonNode, rootDto) = BuildTreeOffThread(resolvedPath);
+                DispatchToUi(() =>
+                {
+                    try
+                    {
+                        Nodes.Clear();
+                        Nodes.Add(allJsonNode);
+                        if (rootDto != null)
+                        {
+                            var root = ApplyTreeDtoToNodes(rootDto);
+                            Nodes.Add(root);
+                            SelectedNode = allJsonNode;
+                        }
+                        else
+                        {
+                            Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
+                            SelectedNode = allJsonNode;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"RebuildFileTree apply failed: {ex}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"RebuildFileTree build failed: {ex}");
+                DispatchToUi(() => StatusMessage = $"Rebuild failed: {ex.Message}");
+            }
+        });
+    }
+
+    private static string? ResolveCssPath()
+    {
+        string cssPath = Path.Combine(AppContext.BaseDirectory, "Assets", "styles.css");
+        if (File.Exists(cssPath)) return cssPath;
+        string sourceCss = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "RequestTracker", "Assets", "styles.css");
+        if (File.Exists(sourceCss)) return Path.GetFullPath(sourceCss);
+        string hardcoded = @"E:\github\RequestTracker\src\RequestTracker\Assets\styles.css";
+        return File.Exists(hardcoded) ? hardcoded : null;
+    }
+
     private bool ConvertMarkdownToHtml(string srcPath, string destPath)
     {
         try
         {
-            // Resolve CSS path relative to app execution
-            string cssPath = Path.Combine(AppContext.BaseDirectory, "Assets", "styles.css");
-            // If running from dotnet run, BaseDirectory might be bin/Debug/...
-            // The Assets folder is in project root. We might need to copy it or look up.
-
-            // For development, let's try to find it in project source if not in bin
-            if (!File.Exists(cssPath))
-            {
-                 // Fallback to source location (hardcoded for this env)
-                 string sourceCss = @"E:\github\RequestTracker\src\RequestTracker\Assets\styles.css";
-                 if (File.Exists(sourceCss)) cssPath = sourceCss;
-            }
+            string? cssPath = ResolveCssPath();
+            if (cssPath == null) return false;
 
             var process = new System.Diagnostics.Process();
             process.StartInfo.FileName = "pandoc";
-            // Use -s (standalone) and --css to include stylesheet
-            // Use --metadata title="Request" to set a title
             process.StartInfo.Arguments = $"\"{srcPath}\" -f markdown -t html -s --css \"{cssPath}\" --metadata title=\"Request Tracker\"";
             process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
             process.StartInfo.UseShellExecute = false;
             process.StartInfo.CreateNoWindow = true;
             process.Start();
 
+            // Read before WaitForExit to avoid deadlock when pipe buffer fills
             string htmlContent = process.StandardOutput.ReadToEnd();
+            string stderr = process.StandardError.ReadToEnd();
             process.WaitForExit();
 
+            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(htmlContent))
+            {
+                Console.WriteLine($"Pandoc failed: ExitCode={process.ExitCode}. stderr: {stderr}");
+                return false;
+            }
             File.WriteAllText(destPath, htmlContent);
             return true;
         }
@@ -704,127 +1242,193 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private void LoadJson(string path)
+    private static async Task<bool> ConvertMarkdownToHtmlAsync(string srcPath, string destPath)
     {
         try
         {
-            string jsonContent = File.ReadAllText(path);
-            JsonTree.Clear();
-            SearchableEntries.Clear();
-            JsonLogSummary = new JsonLogSummary();
-
-            var jsonNode = JsonNode.Parse(jsonContent);
-            string schemaType = "Unknown";
-            var summary = new JsonLogSummary();
-            UnifiedSessionLog? unifiedLog = null;
-
-            if (jsonNode is JsonObject obj)
+            string? cssPath = ResolveCssPath();
+            if (cssPath == null)
             {
-                if (obj.ContainsKey("sessionId") && obj.ContainsKey("statistics"))
-                {
-                    schemaType = "Copilot Session Log";
-                    var model = JsonSerializer.Deserialize<CopilotSessionLog>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    if (model != null)
-                    {
-                        BuildCopilotSummaryAndIndex(model, summary); // Keep for stats
-                        unifiedLog = UnifiedLogFactory.Create(model);
-                    }
-                }
-                else if (HasKeyCI(obj, "entries") && HasKeyCI(obj, "session"))
-                {
-                    schemaType = "Cursor Request Log";
-                    var model = JsonSerializer.Deserialize<CursorRequestLog>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    if (model != null)
-                    {
-                        BuildCursorSummaryAndIndex(model, summary); // Keep for stats
-                        unifiedLog = UnifiedLogFactory.Create(model);
-                        // Fallback: fill Actions from raw JSON when deserializer didn't populate them (e.g. alternate key casing)
-                        if (unifiedLog != null)
-                            FillActionsFromRawJson(jsonContent, unifiedLog);
-                    }
-                }
-                else if (IsSingleCursorRequest(obj))
-                {
-                    // Single-request file (e.g. request-001-logging-system.json): wrap as one-entry session so details + Actions show
-                    schemaType = "Cursor Request (single)";
-                    var singleEntry = JsonSerializer.Deserialize<CursorRequestEntry>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    if (singleEntry != null)
-                    {
-                        var syntheticLog = new CursorRequestLog
-                        {
-                            Session = "Single Request",
-                            Description = singleEntry.RequestId ?? "Request",
-                            Entries = new List<CursorRequestEntry> { singleEntry }
-                        };
-                        unifiedLog = UnifiedLogFactory.Create(syntheticLog);
-                        if (unifiedLog != null && unifiedLog.Entries.Count > 0 && unifiedLog.Entries[0].Actions.Count == 0)
-                            FillActionsFromSingleEntryJson(jsonContent, unifiedLog);
-                    }
-                }
+                Console.WriteLine("ConvertMarkdownToHtmlAsync: CSS path not found");
+                return false;
             }
 
-            if (unifiedLog != null)
+            var process = new System.Diagnostics.Process();
+            process.StartInfo.FileName = "pandoc";
+            process.StartInfo.Arguments = $"\"{srcPath}\" -f markdown -t html -s --css \"{cssPath}\" --metadata title=\"Request Tracker\"";
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+            process.Start();
+
+            // Read output before waiting for exit to avoid deadlock (full pipe blocks process)
+            Task<string> outTask = process.StandardOutput.ReadToEndAsync();
+            Task<string> errTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            string htmlContent = await outTask;
+            string stderr = await errTask;
+
+            if (process.ExitCode != 0)
             {
-                // Force usage of Unified Model for Tree and Search Index
-                // This ensures the UI reflects the Unified Format as requested
-                schemaType = $"{unifiedLog.SourceType} (Unified)";
-
-                // Rebuild Search Index based on Unified Log to ensure paths match the new tree (entries[i])
-                BuildUnifiedSummaryAndIndex(unifiedLog, summary);
-
-                // Serialize Unified Log to JsonNode for the Tree
-                var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false };
-                var unifiedNode = JsonSerializer.SerializeToNode(unifiedLog, options);
-
-                // Update Summary Header
-                 summary.SummaryLines.Clear();
-                 summary.SummaryLines.Add($"Type: {unifiedLog.SourceType}");
-                 summary.SummaryLines.Add($"Session: {unifiedLog.SessionId}");
-                 summary.SummaryLines.Add($"Entries: {unifiedLog.EntryCount}");
-                 if (!string.IsNullOrEmpty(unifiedLog.Model))
-                     summary.SummaryLines.Add($"Model: {unifiedLog.Model}");
-                 if (unifiedLog.LastUpdated.HasValue)
-                     summary.SummaryLines.Add($"Last Updated: {unifiedLog.LastUpdated}");
-
-                // Retain the rich stats from the specific parsers if available (StatsByModel, etc)
-                // but prepend Unified info.
-
-                JsonLogSummary = summary;
-
-                var root = new JsonTreeNode("Root", schemaType, "Object");
-                root.IsExpanded = true;
-                BuildJsonTree(unifiedNode, root, null);
-                JsonTree.Add(root);
+                Console.WriteLine($"Pandoc failed: ExitCode={process.ExitCode}. stderr: {stderr}");
+                return false;
             }
-            else
+            if (string.IsNullOrWhiteSpace(htmlContent))
             {
-                // Fallback to raw view
-                summary.SchemaType = schemaType;
-                summary.SummaryLines.Clear();
-                summary.SummaryLines.Add($"Schema: {schemaType}");
-                summary.SummaryLines.Add($"Total: {summary.TotalCount}");
-                if (!string.IsNullOrEmpty(summary.StatsByModel)) summary.SummaryLines.Add(summary.StatsByModel);
-                if (!string.IsNullOrEmpty(summary.StatsBySuccess)) summary.SummaryLines.Add(summary.StatsBySuccess);
-                if (!string.IsNullOrEmpty(summary.StatsCostOrTokens)) summary.SummaryLines.Add(summary.StatsCostOrTokens);
-                JsonLogSummary = summary;
-
-                var root = new JsonTreeNode("Root", schemaType, "Object");
-                root.IsExpanded = true;
-                BuildJsonTree(jsonNode, root, null);
-                JsonTree.Add(root);
+                Console.WriteLine($"Pandoc produced no output. stderr: {stderr}");
+                return false;
             }
-
-            UpdateFilteredSearchEntries();
+            await File.WriteAllTextAsync(destPath, htmlContent);
+            Console.WriteLine($"Pandoc completed: wrote {htmlContent.Length} chars to {destPath}");
+            return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error parsing JSON: {ex}");
-            JsonTree.Clear();
-            SearchableEntries.Clear();
-            FilteredSearchEntries.Clear();
-            JsonLogSummary = new JsonLogSummary();
-            JsonTree.Add(new JsonTreeNode("Error", ex.Message, "Error"));
+            Console.WriteLine($"Error converting: {ex}");
+            return false;
         }
+    }
+
+    private void SetFallbackHtmlSource(string message)
+    {
+        CurrentPreviewMarkdownText = message;
+        IsPreviewOpenedInBrowser = true;
+    }
+
+    private void LoadJson(string path)
+    {
+        DispatchToUi(() => StatusMessage = "Loading JSON...");
+
+        Task.Run(() =>
+        {
+            try
+            {
+                string jsonContent = File.ReadAllText(path);
+                var jsonNode = JsonNode.Parse(jsonContent);
+                string schemaType = "Unknown";
+                var summary = new JsonLogSummary();
+                UnifiedSessionLog? unifiedLog = null;
+
+                if (jsonNode is JsonObject obj)
+                {
+                    if (obj.ContainsKey("sessionId") && obj.ContainsKey("statistics"))
+                    {
+                        schemaType = "Copilot Session Log";
+                        var model = JsonSerializer.Deserialize<CopilotSessionLog>(jsonContent, CopilotJsonOptions);
+                        if (model != null)
+                        {
+                            BuildCopilotSummaryAndIndex(model, summary);
+                            unifiedLog = UnifiedLogFactory.Create(model);
+                        }
+                    }
+                    else if (HasKeyCI(obj, "entries") && HasKeyCI(obj, "session"))
+                    {
+                        schemaType = "Cursor Request Log";
+                        var model = JsonSerializer.Deserialize<CursorRequestLog>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (model != null)
+                        {
+                            BuildCursorSummaryAndIndex(model, summary);
+                            unifiedLog = UnifiedLogFactory.Create(model);
+                            if (unifiedLog != null)
+                                FillActionsFromRawJson(jsonContent, unifiedLog);
+                        }
+                    }
+                    else if (IsSingleCursorRequest(obj))
+                    {
+                        schemaType = "Cursor Request (single)";
+                        var singleEntry = JsonSerializer.Deserialize<CursorRequestEntry>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (singleEntry != null)
+                        {
+                            var syntheticLog = new CursorRequestLog
+                            {
+                                Session = "Single Request",
+                                Description = singleEntry.RequestId ?? "Request",
+                                Entries = new List<CursorRequestEntry> { singleEntry }
+                            };
+                            unifiedLog = UnifiedLogFactory.Create(syntheticLog);
+                            if (unifiedLog != null && unifiedLog.Entries.Count > 0 && unifiedLog.Entries[0].Actions.Count == 0)
+                                FillActionsFromSingleEntryJson(jsonContent, unifiedLog);
+                        }
+                    }
+                    else if (HasKeyCI(obj, "entries") && HasKeyCI(obj, "sourceType"))
+                    {
+                        schemaType = "Unified Session Log";
+                        var unified = JsonSerializer.Deserialize<UnifiedSessionLog>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (unified?.Entries != null)
+                        {
+                            UnifiedLogFactory.EnsureOriginalEntriesSet(unified);
+                            unifiedLog = unified;
+                        }
+                    }
+                }
+
+                DispatchToUi(() => ApplyLoadedJsonToUi(path, jsonNode, schemaType, summary, unifiedLog));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error parsing JSON: {ex}");
+                var msg = ex.Message;
+                DispatchToUi(() =>
+                {
+                    JsonTree.Clear();
+                    SearchableEntries.Clear();
+                    FilteredSearchEntries.Clear();
+                    UpdateDistinctFilterValues();
+                    JsonLogSummary = new JsonLogSummary();
+                    JsonTree.Add(new JsonTreeNode("Error", msg, "Error"));
+                    StatusMessage = $"Error loading JSON: {msg}";
+                });
+            }
+        });
+    }
+
+    private void ApplyLoadedJsonToUi(string path, JsonNode? jsonNode, string schemaType, JsonLogSummary summary, UnifiedSessionLog? unifiedLog)
+    {
+        JsonTree.Clear();
+        SearchableEntries.Clear();
+        UpdateDistinctFilterValues();
+        JsonLogSummary = new JsonLogSummary();
+
+        if (unifiedLog != null)
+        {
+            schemaType = $"{unifiedLog.SourceType} (Unified)";
+            BuildUnifiedSummaryAndIndex(unifiedLog, summary);
+            var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false };
+            var unifiedNode = JsonSerializer.SerializeToNode(unifiedLog, options);
+            summary.SummaryLines.Clear();
+            summary.SummaryLines.Add($"Type: {unifiedLog.SourceType}");
+            summary.SummaryLines.Add($"Session: {unifiedLog.SessionId}");
+            summary.SummaryLines.Add($"Entries: {unifiedLog.EntryCount}");
+            if (!string.IsNullOrEmpty(unifiedLog.Model))
+                summary.SummaryLines.Add($"Model: {unifiedLog.Model}");
+            if (unifiedLog.LastUpdated.HasValue)
+                summary.SummaryLines.Add($"Last Updated: {unifiedLog.LastUpdated}");
+            JsonLogSummary = summary;
+            var root = new JsonTreeNode("Root", schemaType, "Object");
+            root.IsExpanded = true;
+            BuildJsonTree(unifiedNode, root, null);
+            JsonTree.Add(root);
+        }
+        else
+        {
+            summary.SchemaType = schemaType;
+            summary.SummaryLines.Clear();
+            summary.SummaryLines.Add($"Schema: {schemaType}");
+            summary.SummaryLines.Add($"Total: {summary.TotalCount}");
+            if (!string.IsNullOrEmpty(summary.StatsByModel)) summary.SummaryLines.Add(summary.StatsByModel);
+            if (!string.IsNullOrEmpty(summary.StatsBySuccess)) summary.SummaryLines.Add(summary.StatsBySuccess);
+            if (!string.IsNullOrEmpty(summary.StatsCostOrTokens)) summary.SummaryLines.Add(summary.StatsCostOrTokens);
+            JsonLogSummary = summary;
+            var root = new JsonTreeNode("Root", schemaType, "Object");
+            root.IsExpanded = true;
+            BuildJsonTree(jsonNode, root, null);
+            JsonTree.Add(root);
+        }
+
+        UpdateFilteredSearchEntries();
+        StatusMessage = $"Loaded {Path.GetFileName(path)}";
     }
 
     /// <summary>
@@ -889,6 +1493,86 @@ public partial class MainWindowViewModel : ViewModelBase
         if (!HasKeyCI(obj, "requestId")) return false;
         return HasKeyCI(obj, "exactRequest") || HasKeyCI(obj, "exactRequestNote") ||
                HasKeyCI(obj, "actions");
+    }
+
+    /// <summary>Parses a JSON file into a unified log using key-based format detection (matches single-file logic).
+    /// Returns (unifiedLog, entryCount) or (null, -1) if not recognized.</summary>
+    private static (UnifiedSessionLog? log, int entryCount) TryParseFileToUnifiedLog(string text)
+    {
+        try
+        {
+            var node = JsonNode.Parse(text);
+            if (node is not JsonObject obj) return (null, -1);
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+            // 1) Unified (entries + sourceType)
+            if (HasKeyCI(obj, "entries") && HasKeyCI(obj, "sourceType"))
+            {
+                var unifiedLog = JsonSerializer.Deserialize<UnifiedSessionLog>(text, options);
+                if (unifiedLog?.Entries != null)
+                {
+                    UnifiedLogFactory.EnsureOriginalEntriesSet(unifiedLog);
+                    return (unifiedLog, unifiedLog.EntryCount);
+                }
+            }
+
+            // 2) Cursor log (entries + session)
+            if (HasKeyCI(obj, "entries") && HasKeyCI(obj, "session"))
+            {
+                var cursorLog = JsonSerializer.Deserialize<CursorRequestLog>(text, options);
+                if (cursorLog?.Entries != null)
+                {
+                    var unified = UnifiedLogFactory.Create(cursorLog);
+                    if (unified != null) return (unified, unified.EntryCount);
+                }
+            }
+
+            // 3) Copilot (sessionId + statistics) — require non-empty Requests so Cursor files aren't mis-detected
+            if (obj.ContainsKey("sessionId") && obj.ContainsKey("statistics"))
+            {
+                var copilotLog = JsonSerializer.Deserialize<CopilotSessionLog>(text, CopilotJsonOptions);
+                if (copilotLog?.Requests != null && copilotLog.Requests.Count > 0)
+                {
+                    var unified = UnifiedLogFactory.Create(copilotLog);
+                    if (unified != null) return (unified, unified.EntryCount);
+                }
+            }
+
+            // 4) Single Cursor request
+            if (IsSingleCursorRequest(obj))
+            {
+                var singleEntry = JsonSerializer.Deserialize<CursorRequestEntry>(text, options);
+                if (singleEntry != null)
+                {
+                    var syntheticLog = new CursorRequestLog
+                    {
+                        Session = "Single Request",
+                        Description = singleEntry.RequestId ?? "Request",
+                        Entries = new List<CursorRequestEntry> { singleEntry }
+                    };
+                    var unified = UnifiedLogFactory.Create(syntheticLog);
+                    if (unified != null) return (unified, unified.EntryCount);
+                }
+            }
+
+            // 5) Older non-unified: entries array only (e.g. Cursor without "session")
+            if (HasKeyCI(obj, "entries"))
+            {
+                var cursorLog = JsonSerializer.Deserialize<CursorRequestLog>(text, options);
+                if (cursorLog?.Entries != null && cursorLog.Entries.Count > 0)
+                {
+                    var unified = UnifiedLogFactory.Create(cursorLog);
+                    if (unified != null) return (unified, unified.EntryCount);
+                }
+            }
+
+            return (null, -1);
+        }
+        catch
+        {
+            return (null, -1);
+        }
     }
 
     private static void FillActionsFromSingleEntryJson(string jsonContent, UnifiedSessionLog unifiedLog)
@@ -1021,6 +1705,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 e.QueryText ?? "",  // Updated field name
                 e.QueryTitle ?? "", // Updated field name
                 e.Model ?? "",
+                e.Agent ?? "",
                 e.Timestamp?.ToString() ?? "",
                 e.Status ?? "");
 
@@ -1030,13 +1715,37 @@ public partial class MainWindowViewModel : ViewModelBase
                 DisplayText = string.IsNullOrEmpty(display) ? $"Entry {i + 1}" : display,
                 Timestamp = e.Timestamp?.ToString("o") ?? "",
                 Model = e.Model ?? "",
+                Agent = e.Agent ?? "",
                 EntryIndex = i,
                 SourcePath = $"entries[{i}]", // Matches Unified Model structure
                 SearchText = searchText,
                 UnifiedEntry = e
             });
         }
-        SearchableEntries = new ObservableCollection<SearchableEntry>(summary.SearchIndex);
+        var sorted = summary.SearchIndex.OrderByDescending(e => e.SortableTimestamp ?? DateTime.MinValue).ToList();
+        SearchableEntries = new ObservableCollection<SearchableEntry>(sorted);
+        UpdateDistinctFilterValues();
+    }
+
+    private void UpdateDistinctFilterValues()
+    {
+        var entries = SearchableEntries ?? new ObservableCollection<SearchableEntry>();
+        var requestIds = new List<string> { "" };
+        requestIds.AddRange(entries.Select(e => e.RequestId ?? "").Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
+        var displayTexts = new List<string> { "" };
+        displayTexts.AddRange(entries.Select(e => e.DisplayText ?? "").Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
+        var models = new List<string> { "" };
+        models.AddRange(entries.Select(e => e.Model ?? "").Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
+        var agents = new List<string> { "" };
+        agents.AddRange(entries.Select(e => e.Agent ?? "").Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
+        var timestamps = new List<string> { "" };
+        timestamps.AddRange(entries.Select(e => e.TimestampDisplay ?? "").Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
+
+        DistinctRequestIds = new ObservableCollection<string>(requestIds);
+        DistinctDisplayTexts = new ObservableCollection<string>(displayTexts);
+        DistinctModels = new ObservableCollection<string>(models);
+        DistinctAgents = new ObservableCollection<string>(agents);
+        DistinctTimestamps = new ObservableCollection<string>(timestamps);
     }
 
     private void BuildJsonTree(JsonNode? node, JsonTreeNode parent, string? pathPrefix)
@@ -1076,7 +1785,6 @@ public partial class MainWindowViewModel : ViewModelBase
             IEnumerable<JsonNode?> items = jsonArray;
 
             // Sort requests/entries by timestamp descending if applicable
-            bool isSorted = false;
             if (parent.Name.Equals("requests", StringComparison.OrdinalIgnoreCase) ||
                 parent.Name.Equals("entries", StringComparison.OrdinalIgnoreCase))
             {
@@ -1106,7 +1814,6 @@ public partial class MainWindowViewModel : ViewModelBase
                      }
                      return DateTime.MinValue;
                 }).ToList();
-                isSorted = true;
             }
 
             int index = 0;
@@ -1124,7 +1831,12 @@ public partial class MainWindowViewModel : ViewModelBase
                     string tsStr = tsNode?.ToString() ?? "";
                     if (tsNode is JsonValue tsVal)
                     {
-                         if (tsVal.TryGetValue(out DateTime dt)) tsStr = dt.ToString("MM/dd HH:mm");
+                         if (tsVal.TryGetValue(out DateTime dt))
+                         {
+                             if (dt.Kind == DateTimeKind.Utc) dt = dt.ToLocalTime();
+                             else if (dt.Kind == DateTimeKind.Unspecified) dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
+                             tsStr = dt.ToString("MM/dd HH:mm");
+                         }
                          else if (tsVal.TryGetValue(out long l))
                          {
                              // Try to format unix time
@@ -1167,15 +1879,70 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    /// <summary>DTO for building the file tree on a background thread (no ObservableCollection).</summary>
+    private sealed class TreeDto
+    {
+        public string Path { get; set; } = "";
+        public bool IsDirectory { get; set; }
+        public List<TreeDto> Children { get; } = new();
+    }
+
+    /// <summary>Builds the file tree on a background thread; returns allJson node and root DTO (or null if dir missing).</summary>
+    private static (FileNode allJsonNode, TreeDto? rootDto) BuildTreeOffThread(string resolvedPath)
+    {
+        var allJsonNode = new FileNode("ALL_JSON_VIRTUAL_NODE", false) { Name = "All JSON" };
+        if (!Directory.Exists(resolvedPath))
+            return (allJsonNode, null);
+
+        var rootDto = new TreeDto { Path = resolvedPath, IsDirectory = true };
+        LoadChildrenDto(rootDto);
+        return (allJsonNode, rootDto);
+    }
+
+    private static bool IsArchivedName(string name) =>
+        name.StartsWith("archived-", StringComparison.OrdinalIgnoreCase);
+
+    private static void LoadChildrenDto(TreeDto node)
+    {
+        try
+        {
+            var dirInfo = new DirectoryInfo(node.Path);
+            foreach (var dir in dirInfo.GetDirectories())
+            {
+                var child = new TreeDto { Path = dir.FullName, IsDirectory = true };
+                LoadChildrenDto(child);
+                node.Children.Add(child);
+            }
+            foreach (var file in dirInfo.GetFiles())
+            {
+                if (IsArchivedName(file.Name))
+                    continue;
+                if (file.Extension.Equals(".md", StringComparison.OrdinalIgnoreCase) ||
+                    file.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
+                    node.Children.Add(new TreeDto { Path = file.FullName, IsDirectory = false });
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error accessing {node.Path}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Converts DTO tree to FileNode tree on the UI thread (ObservableCollection safe).</summary>
+    private static FileNode ApplyTreeDtoToNodes(TreeDto dto)
+    {
+        var node = new FileNode(dto.Path, dto.IsDirectory);
+        foreach (var childDto in dto.Children)
+            node.Children.Add(ApplyTreeDtoToNodes(childDto));
+        return node;
+    }
+
     private void InitializeTree()
     {
         Nodes.Clear();
         string resolvedPath = GetResolvedTargetPath();
-
-        // Add "All JSON" node
         var allJsonNode = new FileNode("ALL_JSON_VIRTUAL_NODE", false) { Name = "All JSON" };
         Nodes.Add(allJsonNode);
-
         if (!Directory.Exists(resolvedPath))
         {
             SetStatus($"Directory not found: {resolvedPath}");
@@ -1183,12 +1950,10 @@ public partial class MainWindowViewModel : ViewModelBase
             SelectedNode = allJsonNode;
             return;
         }
-
         SetStatus($"Loaded: {resolvedPath}");
         var root = new FileNode(resolvedPath, true);
         LoadChildren(root);
         Nodes.Add(root);
-
         SelectedNode = allJsonNode;
     }
 
@@ -1207,16 +1972,13 @@ public partial class MainWindowViewModel : ViewModelBase
 
             foreach (var file in dirInfo.GetFiles())
             {
+                if (IsArchivedName(file.Name))
+                    continue;
                 if (file.Extension.Equals(".md", StringComparison.OrdinalIgnoreCase) ||
                     file.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
                 {
                     node.Children.Add(new FileNode(file.FullName, false));
                 }
-            }
-
-            if (node.Children.Count > 0)
-            {
-                node.IsExpanded = true;
             }
         }
         catch (Exception ex)
@@ -1230,10 +1992,15 @@ public partial class MainWindowViewModel : ViewModelBase
         string resolvedPath = GetResolvedTargetPath();
         if (!Directory.Exists(resolvedPath)) return;
 
-        _watcher = new FileSystemWatcher(resolvedPath);
-        _watcher.IncludeSubdirectories = true;
-        _watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite;
-        _watcher.Filter = "*.*";
+        _watcher?.Dispose();
+        _watcher = new FileSystemWatcher(resolvedPath)
+        {
+            IncludeSubdirectories = true,
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.CreationTime,
+            Filter = "*"
+        };
+        // Reduce dropped events when many files change at once (default 8KB can overflow)
+        try { _watcher.InternalBufferSize = 65536; } catch { /* ignore on unsupported platforms */ }
 
         _watcher.Created += OnTreeChanged;
         _watcher.Deleted += OnTreeChanged;
@@ -1250,9 +2017,40 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void OnTreeChanged(object sender, FileSystemEventArgs e)
     {
-        Dispatcher.UIThread.InvokeAsync(() =>
+        string resolvedPath = GetResolvedTargetPath();
+        Task.Run(() =>
         {
-             InitializeTree();
+            try
+            {
+                var (allJsonNode, rootDto) = BuildTreeOffThread(resolvedPath);
+                DispatchToUi(() =>
+                {
+                    try
+                    {
+                        Nodes.Clear();
+                        Nodes.Add(allJsonNode);
+                        if (rootDto != null)
+                        {
+                            var root = ApplyTreeDtoToNodes(rootDto);
+                            Nodes.Add(root);
+                            SelectedNode = allJsonNode;
+                        }
+                        else
+                        {
+                            Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
+                            SelectedNode = allJsonNode;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"OnTreeChanged apply failed: {ex}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"OnTreeChanged build failed: {ex}");
+            }
         });
     }
 
@@ -1272,20 +2070,6 @@ public partial class MainWindowViewModel : ViewModelBase
                 // But we need to call GenerateAndNavigate with a node.
                 var node = new FileNode(e.FullPath, false);
                 GenerateAndNavigate(node);
-
-                // Refresh the WebView by resetting the property or notifying?
-                // Since HtmlSource is a Uri, setting it to the SAME Uri might not trigger property changed or webview reload.
-                // We might need to toggle it or use a query param.
-
-                // Hack: Append timestamp to URL to force reload
-                var currentUri = HtmlSource;
-                if (currentUri != null)
-                {
-                     // Just re-setting the same URI should work if the file changed?
-                     // WebView might cache.
-                     // Let's create a NEW Uri object.
-                     HtmlSource = new Uri(currentUri.AbsoluteUri + "?t=" + DateTime.Now.Ticks);
-                }
             }
         });
     }

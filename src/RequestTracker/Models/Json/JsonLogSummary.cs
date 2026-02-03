@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -50,25 +51,35 @@ namespace RequestTracker.Models.Json
         /// Request ID or similar unique key.
         /// </summary>
         [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(ListLine))]
         private string _requestId = "";
 
         /// <summary>
         /// Primary display line (slug, title, or first part of request text).
         /// </summary>
         [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(ListLine))]
         private string _displayText = "";
 
         /// <summary>
         /// Timestamp string for display and search.
         /// </summary>
         [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(ListLine))]
         private string _timestamp = "";
 
         /// <summary>
         /// Model name for display and filter.
         /// </summary>
         [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(ListLine))]
         private string _model = "";
+
+        /// <summary>
+        /// Agent for display and filter.
+        /// </summary>
+        [ObservableProperty]
+        private string _agent = "";
 
         /// <summary>
         /// 0-based index in requests[] or entries[] for this log type.
@@ -89,11 +100,40 @@ namespace RequestTracker.Models.Json
         private string _searchText = "";
 
         /// <summary>
-        /// Single line for list display: "slug | model | timestamp".
+        /// Parsed timestamp for sorting (local time); null if unparseable.
+        /// UTC and Unspecified are converted to local time.
         /// </summary>
-        public string ListLine => string.IsNullOrEmpty(Timestamp)
-            ? $"{DisplayText} | {Model}"
-            : $"{DisplayText} | {Model} | {Timestamp}";
+        public DateTime? SortableTimestamp
+        {
+            get
+            {
+                if (string.IsNullOrWhiteSpace(Timestamp)) return null;
+                if (DateTime.TryParse(Timestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt))
+                    return ToLocalTime(dt);
+                if (DateTime.TryParse(Timestamp, CultureInfo.CurrentCulture, DateTimeStyles.None, out var dt2))
+                    return ToLocalTime(dt2);
+                return null;
+            }
+        }
+
+        private static DateTime ToLocalTime(DateTime dt)
+        {
+            if (dt.Kind == DateTimeKind.Local) return dt;
+            if (dt.Kind == DateTimeKind.Utc) return dt.ToLocalTime();
+            return DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
+        }
+
+        /// <summary>
+        /// Timestamp formatted for display using local short date/time.
+        /// </summary>
+        public string TimestampDisplay => SortableTimestamp.HasValue ? SortableTimestamp.Value.ToString("g") : "";
+
+        /// <summary>
+        /// Single line for list display: "requestId | slug | model | timestamp" (timestamp in local short date/time).
+        /// </summary>
+        public string ListLine => string.IsNullOrEmpty(TimestampDisplay)
+            ? $"{RequestId} | {DisplayText} | {Model}"
+            : $"{RequestId} | {DisplayText} | {Model} | {TimestampDisplay}";
 
         /// <summary>
         /// Reference to the unified entry object for detailed viewing.

@@ -18,10 +18,10 @@
       <!-- Header -->
       <Grid ColumnDefinitions="*, Auto">
         <StackPanel Grid.Column="0">
-          <SelectableTextBlock Text="{Binding QueryTitle}" FontSize="18" FontWeight="Bold" TextWrapping="Wrap" />
-          <SelectableTextBlock Text="{Binding RequestId}" FontSize="12" Foreground="Gray" />
+          <SelectableTextBlock Text="{Binding QueryTitle}" FontSize="20" FontWeight="Bold" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="{Binding RequestId}" FontSize="14" Foreground="Gray" />
         </StackPanel>
-        <SelectableTextBlock Grid.Column="1" Text="{Binding Timestamp}" FontSize="12" Foreground="Gray" />
+        <SelectableTextBlock Grid.Column="1" Text="{Binding TimestampLocalDisplay}" FontSize="14" Foreground="Gray" />
       </Grid>
 
       <!-- Metadata Badges -->
@@ -34,7 +34,7 @@
             <Setter Property="Margin" Value="0,0,8,8"/>
           </Style>
           <Style Selector="SelectableTextBlock">
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="Foreground" Value="Black"/>
           </Style>
         </WrapPanel.Styles>
@@ -86,11 +86,11 @@
                   <StackPanel IsVisible="{Binding Actions, Converter={StaticResource CountToVisibility}}">
                       <Border BorderBrush="#C0C0C0" BorderThickness="0,0,0,1" Padding="0,0,0,4" Margin="0,0,0,6">
                           <Grid ColumnDefinitions="40,100,*,90,120">
-                              <TextBlock Grid.Column="0" Text="#" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
-                              <TextBlock Grid.Column="1" Text="Type" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
-                              <TextBlock Grid.Column="2" Text="Description" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold" Margin="4,0"/>
-                              <TextBlock Grid.Column="3" Text="Status" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
-                              <TextBlock Grid.Column="4" Text="File Path" FontFamily="Consolas, Monospace" FontSize="12" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="0" Text="#" FontFamily="Consolas, Monospace" FontSize="14" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="1" Text="Type" FontFamily="Consolas, Monospace" FontSize="14" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="2" Text="Description" FontFamily="Consolas, Monospace" FontSize="14" FontWeight="SemiBold" Margin="4,0"/>
+                              <TextBlock Grid.Column="3" Text="Status" FontFamily="Consolas, Monospace" FontSize="14" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="4" Text="File Path" FontFamily="Consolas, Monospace" FontSize="14" FontWeight="SemiBold"/>
                           </Grid>
                       </Border>
                       <ItemsControl ItemsSource="{Binding Actions}">
@@ -103,11 +103,11 @@
                               <DataTemplate DataType="models:UnifiedAction">
                                   <Border BorderBrush="#C0C0C0" BorderThickness="0,0,0,1">
                                       <Grid ColumnDefinitions="40,100,*,90,120">
-                                          <SelectableTextBlock Grid.Column="0" Text="{Binding Order}" FontFamily="Consolas, Monospace" FontSize="12"/>
-                                          <SelectableTextBlock Grid.Column="1" Text="{Binding Type}" FontFamily="Consolas, Monospace" FontSize="12" TextWrapping="Wrap"/>
-                                          <SelectableTextBlock Grid.Column="2" Text="{Binding Description}" FontFamily="Consolas, Monospace" FontSize="12" TextWrapping="Wrap" Margin="4,0"/>
-                                          <SelectableTextBlock Grid.Column="3" Text="{Binding Status}" FontFamily="Consolas, Monospace" FontSize="12"/>
-                                          <SelectableTextBlock Grid.Column="4" Text="{Binding FilePath}" FontFamily="Consolas, Monospace" FontSize="12" TextWrapping="Wrap"/>
+                                          <SelectableTextBlock Grid.Column="0" Text="{Binding Order}" FontFamily="Consolas, Monospace" FontSize="14"/>
+                                          <SelectableTextBlock Grid.Column="1" Text="{Binding Type}" FontFamily="Consolas, Monospace" FontSize="14" TextWrapping="Wrap"/>
+                                          <SelectableTextBlock Grid.Column="2" Text="{Binding Description}" FontFamily="Consolas, Monospace" FontSize="14" TextWrapping="Wrap" Margin="4,0"/>
+                                          <SelectableTextBlock Grid.Column="3" Text="{Binding Status}" FontFamily="Consolas, Monospace" FontSize="14"/>
+                                          <SelectableTextBlock Grid.Column="4" Text="{Binding FilePath}" FontFamily="Consolas, Monospace" FontSize="14" TextWrapping="Wrap"/>
                                       </Grid>
                                   </Border>
                               </DataTemplate>
@@ -123,7 +123,7 @@
         <ItemsControl ItemsSource="{Binding ContextList}">
           <ItemsControl.ItemTemplate>
             <DataTemplate>
-              <SelectableTextBlock Text="{Binding}" Margin="0,2" FontSize="12" TextWrapping="Wrap"/>
+              <SelectableTextBlock Text="{Binding}" Margin="0,2" FontSize="14" TextWrapping="Wrap"/>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
@@ -144,7 +144,7 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                   <SelectableTextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,2"/>
+                   <SelectableTextBlock Text="{Binding}" FontSize="14" TextWrapping="Wrap" Margin="0,2"/>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>

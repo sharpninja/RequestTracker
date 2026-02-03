@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RequestTracker.ViewModels"
+        xmlns:models="using:RequestTracker.Models"
+        xmlns:conv="using:RequestTracker.Converters"
+        x:Class="RequestTracker.Views.ChatWindow"
+        x:DataType="vm:ChatWindowViewModel"
+        Title="AI Assistant"
+        Width="500" Height="550"
+        WindowStartupLocation="CenterScreen"
+        Icon="/Assets/avalonia-logo.ico"
+        FontSize="14">
+
+    <Window.Resources>
+        <conv:RoleToBrushConverter x:Key="RoleToBrush"/>
+    </Window.Resources>
+
+    <Design.DataContext>
+        <vm:ChatWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto, Auto, *, Auto">
+        <Border Grid.Row="0" Background="#f0f0f0" Padding="8,6" BorderBrush="#ddd" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto, *">
+                <TextBlock Grid.Column="0" Text="Model:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="14"/>
+                <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableModels}" SelectedItem="{Binding SelectedModel}"
+                          MinWidth="180" HorizontalAlignment="Left" FontSize="14"/>
+            </Grid>
+        </Border>
+        <Border Grid.Row="1" Background="#fafafa" Padding="6,4" BorderBrush="#eee" BorderThickness="0,0,0,1">
+            <Grid RowDefinitions="Auto, *">
+                <TextBlock Grid.Row="0" Text="Prompts (click to fill, double-click to send)" FontSize="12" Foreground="Gray" Margin="0,0,0,4"/>
+                <ListBox Grid.Row="1" ItemsSource="{Binding PromptTemplates}" MaxHeight="100" Margin="0,0,0,0"
+                         Tapped="OnPromptListTapped" DoubleTapped="OnPromptListDoubleTapped">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="models:PromptTemplate">
+                            <TextBlock Text="{Binding Name}" FontSize="14" Padding="4,2"/>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Margin="8" x:Name="MessageScroll">
+            <ItemsControl ItemsSource="{Binding Messages}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="models:ChatMessage">
+                        <Border Margin="0,4" Padding="10,8" CornerRadius="4"
+                                Background="{Binding Role, Converter={StaticResource RoleToBrush}}">
+                            <StackPanel Spacing="4">
+                                <TextBlock FontWeight="SemiBold" FontSize="14" Foreground="Gray"
+                                           Text="{Binding Role}"/>
+                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="16"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        <Border Grid.Row="3" Background="#f0f0f0" Padding="8" BorderBrush="#ddd" BorderThickness="0,1,0,0">
+            <Grid ColumnDefinitions="*, Auto" RowDefinitions="Auto, Auto">
+                <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding CurrentInput}" Watermark="Ask about your logs..."
+                         MinHeight="36" Margin="0,0,8,0" KeyDown="OnInputKeyDown" FontSize="14"/>
+                <Button Grid.Row="0" Grid.Column="1" Content="Send" Command="{Binding SendCommand}"
+                        IsEnabled="{Binding !IsLoading}" MinWidth="70" FontSize="14"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" IsVisible="{Binding IsLoading}"
+                           Text="Thinking…" Foreground="Gray" FontSize="14" Margin="0,4,0,0"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace RequestTracker.Models.Json
@@ -35,6 +36,7 @@ namespace RequestTracker.Models.Json
         public string ModelProvider { get; set; } = "";
 
         [JsonPropertyName("workspace")]
+        [JsonConverter(typeof(WorkspaceInfoConverter))]
         public WorkspaceInfo? Workspace { get; set; }
 
         [JsonPropertyName("statistics")]
@@ -99,6 +101,54 @@ namespace RequestTracker.Models.Json
 
         [JsonPropertyName("branch")]
         public string Branch { get; set; } = "";
+    }
+
+    /// <summary>Allows workspace to be either an object, a string (e.g. path), or other value in Copilot session JSON.</summary>
+    public sealed class WorkspaceInfoConverter : JsonConverter<WorkspaceInfo?>
+    {
+        /// <summary>Options without this converter to avoid infinite recursion when deserializing a nested object.</summary>
+        private static readonly JsonSerializerOptions InnerOptions = new()
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        public override WorkspaceInfo? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            switch (reader.TokenType)
+            {
+                case JsonTokenType.Null:
+                    reader.Read(); // advance past null to avoid infinite recursion
+                    return null;
+                case JsonTokenType.String:
+                    var path = reader.GetString();
+                    return string.IsNullOrEmpty(path) ? null : new WorkspaceInfo { Project = path };
+                case JsonTokenType.StartObject:
+                    // Must NOT pass 'options' here: it contains this converter, so Deserialize would call Read again → stack overflow
+                    return JsonSerializer.Deserialize<WorkspaceInfo>(ref reader, InnerOptions);
+                case JsonTokenType.Number:
+                    try { _ = reader.GetDouble(); } catch { /* consume and ignore */ }
+                    return null;
+                case JsonTokenType.True:
+                case JsonTokenType.False:
+                    _ = reader.GetBoolean();
+                    return null;
+                case JsonTokenType.StartArray:
+                    reader.Skip();
+                    return null;
+                default:
+                    // Any other token (Comment, etc.): advance by one so the reader progresses
+                    reader.Read();
+                    return null;
+            }
+        }
+
+        public override void Write(Utf8JsonWriter writer, WorkspaceInfo? value, JsonSerializerOptions options)
+        {
+            if (value == null)
+                writer.WriteNullValue();
+            else
+                JsonSerializer.Serialize(writer, value, options);
+        }
     }
 
     public class StatisticsInfo

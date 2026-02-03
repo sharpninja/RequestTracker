@@ -11,12 +11,23 @@ public class LayoutSettings
     public GridLengthDto PortraitViewerRowHeight { get; set; } = new(1, GridUnitType.Star);
     public GridLengthDto PortraitHistoryRowHeight { get; set; } = new(150, GridUnitType.Pixel);
 
+    /// <summary>JSON viewer: search index row height (row 2). Default 2*.</summary>
+    public GridLengthDto JsonViewerSearchIndexRowHeight { get; set; } = new(2, GridUnitType.Star);
+    /// <summary>JSON viewer: tree row height (row 4). Default *.</summary>
+    public GridLengthDto JsonViewerTreeRowHeight { get; set; } = new(1, GridUnitType.Star);
+
     // Window State Persistence
     public double WindowWidth { get; set; } = 1000;
     public double WindowHeight { get; set; } = 800;
     public double WindowX { get; set; } = 100;
     public double WindowY { get; set; } = 100;
     public WindowState WindowState { get; set; } = WindowState.Normal;
+
+    // Chat Window State
+    public double ChatWindowWidth { get; set; } = 500;
+    public double ChatWindowHeight { get; set; } = 550;
+    public double ChatWindowX { get; set; }
+    public double ChatWindowY { get; set; }
 }
 
 public class GridLengthDto
