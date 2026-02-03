@@ -62,10 +62,12 @@ namespace RequestTracker.Models.Json
         private string _displayText = "";
 
         /// <summary>
-        /// Timestamp string for display and search.
+        /// Timestamp string for display and search. Must be the entry's timestamp, not the file's.
         /// </summary>
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(ListLine))]
+        [NotifyPropertyChangedFor(nameof(SortableTimestamp))]
+        [NotifyPropertyChangedFor(nameof(TimestampDisplay))]
         private string _timestamp = "";
 
         /// <summary>
@@ -101,19 +103,28 @@ namespace RequestTracker.Models.Json
 
         /// <summary>
         /// Parsed timestamp for sorting (local time); null if unparseable.
-        /// UTC and Unspecified are converted to local time.
+        /// Uses the entry's timestamp only (never file timestamp). UTC and Unspecified are converted to local time.
         /// </summary>
         public DateTime? SortableTimestamp
         {
             get
             {
-                if (string.IsNullOrWhiteSpace(Timestamp)) return null;
-                if (DateTime.TryParse(Timestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt))
-                    return ToLocalTime(dt);
-                if (DateTime.TryParse(Timestamp, CultureInfo.CurrentCulture, DateTimeStyles.None, out var dt2))
-                    return ToLocalTime(dt2);
-                return null;
+                var dt = GetEntryTimestamp();
+                return dt.HasValue ? ToLocalTime(dt.Value) : null;
             }
+        }
+
+        /// <summary>Gets the entry's timestamp for display/sort. Prefers stored Timestamp string, then UnifiedEntry.Timestamp.</summary>
+        private DateTime? GetEntryTimestamp()
+        {
+            if (!string.IsNullOrWhiteSpace(Timestamp))
+            {
+                if (DateTime.TryParse(Timestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt))
+                    return dt;
+                if (DateTime.TryParse(Timestamp, CultureInfo.CurrentCulture, DateTimeStyles.None, out var dt2))
+                    return dt2;
+            }
+            return UnifiedEntry?.Timestamp;
         }
 
         private static DateTime ToLocalTime(DateTime dt)
@@ -124,7 +135,7 @@ namespace RequestTracker.Models.Json
         }
 
         /// <summary>
-        /// Timestamp formatted for display using local short date/time.
+        /// Timestamp formatted for display using local short date/time. Reflects the entry's timestamp, not the file's.
         /// </summary>
         public string TimestampDisplay => SortableTimestamp.HasValue ? SortableTimestamp.Value.ToString("g") : "";
 

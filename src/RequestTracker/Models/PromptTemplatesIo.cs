@@ -6,7 +6,7 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace RequestTracker.Models;
 
-/// <summary>Path and content for the prompt templates YAML file (name + Handlebars template per item).</summary>
+/// <summary>Path and content for the prompt templates YAML file (name + template text per item; context is sent to the model with each query).</summary>
 public static class PromptTemplatesIo
 {
     private const string FileName = "prompt_templates.yaml";
@@ -59,18 +59,17 @@ public static class PromptTemplatesIo
 
     private static string GetDefaultContent()
     {
-        return @"# Prompt templates for the AI Assistant (Handlebars: use {{context}} for current log context).
+        return @"# Prompt templates for the AI Assistant.
+# Context is sent to the model with each query; templates are plain text.
 # Single-click to fill input, double-click to send.
 
 prompts:
   - name: Summarize errors
     template: |
-      Summarize any errors or failures in the following context:
-      {{context}}
+      Summarize any errors or failures in the current log context.
   - name: List request IDs
     template: |
-      List all request IDs and their status from the context below:
-      {{context}}
+      List all request IDs and their status from the current log context.
   - name: Prompt 1
     template: ''
   - name: Prompt 2

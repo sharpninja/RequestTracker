@@ -1,12 +1,10 @@
 using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using HandlebarsDotNet;
 using RequestTracker.Models;
 using RequestTracker.Services;
 
@@ -61,35 +59,25 @@ public partial class ChatWindowViewModel : ViewModelBase
         });
     }
 
-    /// <summary>Renders a prompt template with the current context (Handlebars).</summary>
-    private string RenderPrompt(PromptTemplate prompt)
+    /// <summary>Returns the prompt template text as-is. Context is sent to the model separately with each query, not inserted into templates.</summary>
+    private static string GetPromptText(PromptTemplate prompt)
     {
         if (prompt == null || string.IsNullOrEmpty(prompt.Template)) return "";
-        try
-        {
-            var context = _getContext();
-            var compiled = Handlebars.Compile(prompt.Template);
-            var data = new { context };
-            return compiled(data) ?? "";
-        }
-        catch (Exception ex)
-        {
-            return $"[Template error: {ex.Message}]";
-        }
+        return prompt.Template.Trim();
     }
 
     [RelayCommand]
     private void PopulatePrompt(PromptTemplate? prompt)
     {
         if (prompt == null) return;
-        CurrentInput = RenderPrompt(prompt);
+        CurrentInput = GetPromptText(prompt);
     }
 
     [RelayCommand]
     private async Task SubmitPromptAsync(PromptTemplate? prompt)
     {
         if (prompt == null) return;
-        CurrentInput = RenderPrompt(prompt);
+        CurrentInput = GetPromptText(prompt);
         if (string.IsNullOrWhiteSpace(CurrentInput)) return;
         await SendAsync().ConfigureAwait(false);
     }
@@ -143,6 +131,7 @@ public partial class ChatWindowViewModel : ViewModelBase
         CurrentInput = "";
         var userMsg = new ChatMessage { Role = "user", Text = text };
         Messages.Add(userMsg);
+        var context = _getContext();
         IsLoading = true;
         SendCommand.NotifyCanExecuteChanged();
 
@@ -152,7 +141,6 @@ public partial class ChatWindowViewModel : ViewModelBase
 
         try
         {
-            var context = _getContext();
             var model = SelectedModel;
             var reply = await Task.Run(() => _agentService.SendMessageAsync(text, context, model, token), token).ConfigureAwait(false);
 

@@ -56,29 +56,28 @@
       <Separator />
 
       <!-- Query -->
-      <Expander Header="Query" IsExpanded="True">
+      <Expander Header="Query" IsExpanded="True" HorizontalAlignment="Stretch">
         <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
           <SelectableTextBlock Text="{Binding QueryText}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
         </Border>
       </Expander>
 
-      <!-- Response -->
-      <Expander Header="Response" IsExpanded="True">
-        <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
-          <SelectableTextBlock Text="{Binding Response}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
-        </Border>
-      </Expander>
-
-      <!-- Interpretation (if present) -->
-      <Expander Header="Interpretation" IsExpanded="True" IsVisible="{Binding Interpretation, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+      <!-- Interpretation (if present); collapsed by default -->
+      <Expander Header="Interpretation" IsExpanded="False" HorizontalAlignment="Stretch" IsVisible="{Binding Interpretation, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
         <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#F0F8FF">
           <SelectableTextBlock Text="{Binding Interpretation}" TextWrapping="Wrap" FontFamily="Segoe UI, Sans-Serif" Foreground="Black" />
         </Border>
       </Expander>
 
-      <!-- Actions: always show section; grid when there are items, empty-state message when none -->
-      <StackPanel>
-          <TextBlock Text="{Binding Actions.Count, StringFormat='Actions ({0})'}" FontWeight="SemiBold" Margin="0,10,0,4"/>
+      <!-- Response -->
+      <Expander Header="Response" IsExpanded="True" HorizontalAlignment="Stretch">
+        <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
+          <SelectableTextBlock Text="{Binding Response}" TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
+        </Border>
+      </Expander>
+
+      <!-- Actions: expander with grid when there are items, empty-state message when none -->
+      <Expander Header="{Binding Actions.Count, StringFormat='Actions ({0})'}" HorizontalAlignment="Stretch">
           <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Background="White" Padding="12" MinHeight="80">
               <Grid>
                   <TextBlock Text="No actions recorded." Foreground="Gray" FontStyle="Italic" HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -116,10 +115,10 @@
                   </StackPanel>
               </Grid>
           </Border>
-      </StackPanel>
+      </Expander>
 
       <!-- Context -->
-      <Expander Header="Context">
+      <Expander Header="Context" HorizontalAlignment="Stretch">
         <ItemsControl ItemsSource="{Binding ContextList}">
           <ItemsControl.ItemTemplate>
             <DataTemplate>
@@ -130,7 +129,7 @@
       </Expander>
 
       <!-- Tags/Notes -->
-      <Expander Header="Tags &amp; Notes" IsExpanded="True">
+      <Expander Header="Tags &amp; Notes" IsExpanded="True" HorizontalAlignment="Stretch">
         <StackPanel Spacing="5">
             <SelectableTextBlock Text="{Binding FailureNote, StringFormat='Failure Note: {0}'}"
                        IsVisible="{Binding FailureNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
@@ -152,11 +151,15 @@
       </Expander>
 
       <!-- Original JSON -->
-      <Expander Header="Original JSON">
-          <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA">
-            <SelectableTextBlock Text="{Binding OriginalEntry, Converter={StaticResource ObjectToJson}}"
-                               TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" />
-          </Border>
+      <Expander Header="Original JSON" HorizontalAlignment="Stretch" x:CompileBindings="False">
+          <StackPanel Spacing="6" HorizontalAlignment="Stretch">
+            <Button Content="Copy" Command="{Binding DataContext.CopyOriginalJsonCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                    CommandParameter="{Binding}" HorizontalAlignment="Right"/>
+            <Border BorderBrush="#D0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FAFAFA" HorizontalAlignment="Stretch">
+              <SelectableTextBlock Text="{Binding OriginalEntry, Converter={StaticResource ObjectToJson}}"
+                                 TextWrapping="Wrap" FontFamily="Consolas, Monospace" Foreground="Black" HorizontalAlignment="Stretch"/>
+            </Border>
+          </StackPanel>
       </Expander>
 
     </StackPanel>

@@ -22,6 +22,7 @@
         <conv:PathToWslConverter x:Key="PathToWsl"/>
         <conv:EqualityToBrushConverter x:Key="EqualityToBrush"/>
         <conv:EmptyStringToAllConverter x:Key="EmptyStringToAll"/>
+        <conv:FileNodeToArchiveVisibleConverter x:Key="FileNodeToArchiveVisible"/>
     </Window.Resources>
 
     <Design.DataContext>
@@ -39,6 +40,19 @@
             <TreeView.ItemContainerTheme>
                 <ControlTheme TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}" x:DataType="models:FileNode">
                     <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                    <Setter Property="ContextMenu">
+                        <Setter.Value>
+                            <ContextMenu x:CompileBindings="False">
+                                <MenuItem Header="Open"
+                                          Command="{Binding DataContext.OpenTreeItemCommand, ElementName=Root}"
+                                          CommandParameter="{Binding}"/>
+                                <MenuItem Header="Archive"
+                                          Command="{Binding DataContext.ArchiveTreeItemCommand, ElementName=Root}"
+                                          CommandParameter="{Binding}"
+                                          IsVisible="{Binding Converter={StaticResource FileNodeToArchiveVisible}}"/>
+                            </ContextMenu>
+                        </Setter.Value>
+                    </Setter>
                 </ControlTheme>
             </TreeView.ItemContainerTheme>
         </TreeView>

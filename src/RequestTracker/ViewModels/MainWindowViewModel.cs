@@ -583,6 +583,26 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand]
+    private async Task CopyOriginalJson(UnifiedRequestEntry? entry)
+    {
+        if (entry?.OriginalEntry == null)
+        {
+            SetStatus("No original JSON to copy.");
+            return;
+        }
+        try
+        {
+            var json = JsonSerializer.Serialize(entry.OriginalEntry, new JsonSerializerOptions { WriteIndented = true });
+            await _clipboardService.SetTextAsync(json);
+            SetStatus("Copied original JSON to clipboard.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Copy failed: {ex.Message}");
+        }
+    }
+
     public void HandleNavigation(string path)
     {
         // Path might be the resolved path in the temp directory, e.g., C:\Users\...\Temp\RequestTracker_Cache\next.md
@@ -931,7 +951,9 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             try
             {
-                var jsonFiles = Directory.GetFiles(rootPath, "*.json", SearchOption.AllDirectories);
+                var jsonFiles = Directory.GetFiles(rootPath, "*.json", SearchOption.AllDirectories)
+                    .Where(f => !IsArchivedName(Path.GetFileName(f)))
+                    .ToArray();
                 var unifiedLogs = new List<UnifiedSessionLog>();
                 int totalRequests = 0;
                 int totalFiles = jsonFiles.Length;
@@ -1154,6 +1176,54 @@ public partial class MainWindowViewModel : ViewModelBase
             }
         });
     }
+
+    /// <summary>Opens (navigates to) the tree node. Used by tree context menu.</summary>
+    [RelayCommand]
+    private void OpenTreeItem(FileNode? node)
+    {
+        if (node == null) return;
+        SelectedNode = node;
+        ExpandToNode(Nodes, node);
+    }
+
+    /// <summary>Archives the file represented by the tree node by renaming to archive-&lt;name&gt;. Used by tree context menu. Not available for All JSON or directories.</summary>
+    [RelayCommand(CanExecute = nameof(CanArchiveTreeItem))]
+    private void ArchiveTreeItem(FileNode? node)
+    {
+        if (node == null || node.Path == "ALL_JSON_VIRTUAL_NODE" || node.IsDirectory) return;
+        string path = node.Path;
+        if (!File.Exists(path)) return;
+        string? dir = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(dir)) return;
+        string name = Path.GetFileName(path);
+        if (IsArchivedName(name)) return;
+        string newName = "archive-" + name;
+        string newPath = Path.Combine(dir, newName);
+        Task.Run(() =>
+        {
+            try
+            {
+                File.Move(path, newPath);
+                DispatchToUi(() =>
+                {
+                    if (SelectedNode == node)
+                        _currentMarkdownPath = null;
+                    RebuildFileTree();
+                    StatusMessage = $"Archived: {newName}";
+                });
+            }
+            catch (Exception ex)
+            {
+                DispatchToUi(() => StatusMessage = $"Archive failed: {ex.Message}");
+            }
+        });
+    }
+
+    private static bool CanArchiveTreeItem(FileNode? node) =>
+        node != null &&
+        node.Path != "ALL_JSON_VIRTUAL_NODE" &&
+        !node.IsDirectory &&
+        !IsArchivedName(Path.GetFileName(node.Path));
 
     /// <summary>Rebuilds the file tree on a background thread and applies on UI; selects All JSON.</summary>
     private void RebuildFileTree()
@@ -1900,7 +1970,8 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     private static bool IsArchivedName(string name) =>
-        name.StartsWith("archived-", StringComparison.OrdinalIgnoreCase);
+        name.StartsWith("archived-", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith("archive-", StringComparison.OrdinalIgnoreCase);
 
     private static void LoadChildrenDto(TreeDto node)
     {

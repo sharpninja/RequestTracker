@@ -28,6 +28,12 @@ public class LayoutSettings
     public double ChatWindowHeight { get; set; } = 550;
     public double ChatWindowX { get; set; }
     public double ChatWindowY { get; set; }
+
+    /// <summary>Chat window: row height for template picker (row 1). Splitter below it. Default 1*.</summary>
+    public GridLengthDto ChatTemplatePickerRowHeight { get; set; } = new(1, GridUnitType.Star);
+
+    /// <summary>True if the chat window was open when the app was last closed; reopen it on next launch.</summary>
+    public bool ChatWindowWasOpen { get; set; }
 }
 
 public class GridLengthDto

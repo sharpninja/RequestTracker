@@ -19,7 +19,7 @@
         <vm:ChatWindowViewModel/>
     </Design.DataContext>
 
-    <Grid RowDefinitions="Auto, Auto, *, Auto">
+    <Grid x:Name="ChatMainGrid" RowDefinitions="Auto, 1*, 4, *, Auto">
         <Border Grid.Row="0" Background="#f0f0f0" Padding="8,6" BorderBrush="#ddd" BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="Auto, *">
                 <TextBlock Grid.Column="0" Text="Model:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="14"/>
@@ -27,20 +27,21 @@
                           MinWidth="180" HorizontalAlignment="Left" FontSize="14"/>
             </Grid>
         </Border>
-        <Border Grid.Row="1" Background="#fafafa" Padding="6,4" BorderBrush="#eee" BorderThickness="0,0,0,1">
+        <Border Grid.Row="1" Background="#fafafa" Padding="4,2" BorderBrush="#eee" BorderThickness="0,0,0,1">
             <Grid RowDefinitions="Auto, *">
-                <TextBlock Grid.Row="0" Text="Prompts (click to fill, double-click to send)" FontSize="12" Foreground="Gray" Margin="0,0,0,4"/>
-                <ListBox Grid.Row="1" ItemsSource="{Binding PromptTemplates}" MaxHeight="100" Margin="0,0,0,0"
+                <TextBlock Grid.Row="0" Text="Prompts (click to fill, double-click to send)" FontSize="12" Foreground="Gray" Margin="0,0,0,2"/>
+                <ListBox Grid.Row="1" ItemsSource="{Binding PromptTemplates}" Margin="0" Padding="0"
                          Tapped="OnPromptListTapped" DoubleTapped="OnPromptListDoubleTapped">
                     <ListBox.ItemTemplate>
                         <DataTemplate DataType="models:PromptTemplate">
-                            <TextBlock Text="{Binding Name}" FontSize="14" Padding="4,2"/>
+                            <TextBlock Text="{Binding Name}" FontSize="14" Padding="2,1"/>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
             </Grid>
         </Border>
-        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+        <GridSplitter Grid.Row="2" ResizeDirection="Rows" Background="LightGray" Height="4"/>
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                       Margin="8" x:Name="MessageScroll">
             <ItemsControl ItemsSource="{Binding Messages}">
                 <ItemsControl.ItemTemplate>
@@ -57,7 +58,7 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
-        <Border Grid.Row="3" Background="#f0f0f0" Padding="8" BorderBrush="#ddd" BorderThickness="0,1,0,0">
+        <Border Grid.Row="4" Background="#f0f0f0" Padding="8" BorderBrush="#ddd" BorderThickness="0,1,0,0">
             <Grid ColumnDefinitions="*, Auto" RowDefinitions="Auto, Auto">
                 <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding CurrentInput}" Watermark="Ask about your logs..."
                          MinHeight="36" Margin="0,0,8,0" KeyDown="OnInputKeyDown" FontSize="14"/>

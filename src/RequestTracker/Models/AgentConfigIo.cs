@@ -66,9 +66,13 @@ public static class AgentConfigIo
         File.WriteAllText(path, newContent);
     }
 
+    private static readonly char[] LineEndings = new[] { '\r', '\n' };
+
     private static (string body, string? frontMatter) SplitFrontMatter(string content)
     {
-        var lines = content.Split('\n');
+        // Normalize to LF so we don't introduce stray CR or double newlines when rewriting
+        var normalized = content.Replace("\r\n", "\n").Replace("\r", "\n");
+        var lines = normalized.Split('\n');
         if (lines.Length < 2 || lines[0].Trim() != FrontMatterDelimiter)
             return (content, null);
         var endIndex = -1;
@@ -83,11 +87,17 @@ public static class AgentConfigIo
         if (endIndex < 0) return (content, null);
         var body = new StringBuilder();
         for (int i = endIndex + 1; i < lines.Length; i++)
-            body.AppendLine(lines[i]);
+            AppendLineLf(body, lines[i]);
         var frontMatter = new StringBuilder();
         for (int i = 1; i < endIndex; i++)
-            frontMatter.AppendLine(lines[i]);
-        return (body.ToString().TrimEnd(), frontMatter.ToString());
+            AppendLineLf(frontMatter, lines[i]);
+        return (body.ToString().TrimEnd(LineEndings), frontMatter.ToString().TrimEnd(LineEndings));
+    }
+
+    private static void AppendLineLf(StringBuilder sb, string line)
+    {
+        sb.Append(line.TrimEnd(LineEndings));
+        sb.Append('\n');
     }
 
     private static string? ParseFrontMatterValue(string frontMatter, string key)
@@ -126,18 +136,7 @@ public static class AgentConfigIo
 
     private static string GetDefaultContent()
     {
-        return @"---
-model: llama3
----
-
-# Agent configuration
-
-Instructions and context for the AI assistant. This file is sent to the agent when you open the chat and when context is refreshed.
-
-- Add project-specific instructions here.
-- Describe how you want the agent to interpret the request log (e.g. focus on errors, summarize by day).
-
-Prompt templates are in prompt_templates.yaml (same folder). Use {{context}} for the current log context; single-click to fill input, double-click to send.
-";
+        // Use explicit \n so saved file has consistent line endings (no stray CRLF).
+        return "---\nmodel: llama3\n---\n\n# Agent configuration\n\nInstructions and context for the AI assistant. This file is sent to the agent when you open the chat and when context is refreshed.\n\n- Add project-specific instructions here.\n- Describe how you want the agent to interpret the request log (e.g. focus on errors, summarize by day).\n\nPrompt templates are in prompt_templates.yaml (same folder). Context is sent to the model with each query; single-click to fill input, double-click to send.\n";
     }
 }

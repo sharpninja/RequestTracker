@@ -20,6 +20,8 @@ public partial class MainWindow : Window
     private bool _isUpdatingLayout;
     private LayoutSettings _layoutSettings = new();
     private ChatWindow? _chatWindow;
+    /// <summary>Set during main window closing so SaveSettings can persist that the chat was open.</summary>
+    private bool? _chatWindowWasOpenOnClosing;
 
     public MainWindow()
     {
@@ -112,6 +114,9 @@ public partial class MainWindow : Window
             await Task.Delay(150);
             Dispatcher.UIThread.Post(() => Activate(), DispatcherPriority.Input);
         }
+
+        if (_layoutSettings.ChatWindowWasOpen)
+            Dispatcher.UIThread.Post(() => ShowChatWindowIfRequested(), DispatcherPriority.Loaded);
     }
 
     private void LoadSettings()
@@ -146,6 +151,8 @@ public partial class MainWindow : Window
             toSave.WindowX = _layoutSettings.WindowX;
             toSave.WindowY = _layoutSettings.WindowY;
             toSave.WindowState = _layoutSettings.WindowState;
+            toSave.ChatWindowWasOpen = _chatWindowWasOpenOnClosing ?? (_chatWindow != null);
+            _chatWindowWasOpenOnClosing = null;
             LayoutSettingsIo.Save(toSave);
         }
         catch
@@ -156,6 +163,7 @@ public partial class MainWindow : Window
 
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
+        _chatWindowWasOpenOnClosing = _chatWindow != null;
         _chatWindow?.Close();
         _chatWindow = null;
 
@@ -422,6 +430,12 @@ public partial class MainWindow : Window
 
     private void OpenChatWindow(object? sender, RoutedEventArgs e)
     {
+        ShowChatWindowIfRequested();
+    }
+
+    /// <summary>Opens the chat window if not already open. Call from toolbar button or on startup when ChatWindowWasOpen was true.</summary>
+    private void ShowChatWindowIfRequested()
+    {
         if (DataContext is not MainWindowViewModel mainVm)
             return;
         if (_chatWindow != null)
@@ -438,8 +452,20 @@ public partial class MainWindow : Window
         {
             mainVm.SetContextConsumer(null);
             _chatWindow = null;
+            PersistChatWindowClosed();
         };
         _chatWindow.Show();
         chatVm.NotifyContextChanged(mainVm.GetLogContextForAgent());
+    }
+
+    private void PersistChatWindowClosed()
+    {
+        try
+        {
+            var s = LayoutSettingsIo.Load() ?? new LayoutSettings();
+            s.ChatWindowWasOpen = false;
+            LayoutSettingsIo.Save(s);
+        }
+        catch { /* ignore */ }
     }
 }

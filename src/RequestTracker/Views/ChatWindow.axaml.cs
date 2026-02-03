@@ -46,6 +46,18 @@ public partial class ChatWindow : Window
             }
             if (s.ChatWindowX != 0 || s.ChatWindowY != 0)
                 Position = new PixelPoint((int)s.ChatWindowX, (int)s.ChatWindowY);
+            ApplyTemplatePickerSplitterSettings(s);
+        }
+        catch { /* ignore */ }
+    }
+
+    private void ApplyTemplatePickerSplitterSettings(LayoutSettings? s)
+    {
+        try
+        {
+            if (s == null || ChatMainGrid?.RowDefinitions == null || ChatMainGrid.RowDefinitions.Count < 5)
+                return;
+            ChatMainGrid.RowDefinitions[1].Height = s.ChatTemplatePickerRowHeight.ToGridLength();
         }
         catch { /* ignore */ }
     }
@@ -59,7 +71,19 @@ public partial class ChatWindow : Window
             s.ChatWindowHeight = Height;
             s.ChatWindowX = Position.X;
             s.ChatWindowY = Position.Y;
+            SaveTemplatePickerSplitterSettings(s);
             LayoutSettingsIo.Save(s);
+        }
+        catch { /* ignore */ }
+    }
+
+    private void SaveTemplatePickerSplitterSettings(LayoutSettings s)
+    {
+        try
+        {
+            if (ChatMainGrid?.RowDefinitions == null || ChatMainGrid.RowDefinitions.Count < 5)
+                return;
+            s.ChatTemplatePickerRowHeight = GridLengthDto.FromGridLength(ChatMainGrid.RowDefinitions[1].Height);
         }
         catch { /* ignore */ }
     }
