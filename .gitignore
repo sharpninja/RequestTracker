@@ -5,3 +5,5 @@ obj/
 RequestTracker.slnx
 stdout*.log
 stderr*.log
+src/RequestTracker/crash.log
+docs/EXCEPTION-EVALUATION.md
