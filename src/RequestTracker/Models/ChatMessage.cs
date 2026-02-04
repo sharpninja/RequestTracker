@@ -1,8 +1,13 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+
 namespace RequestTracker.Models;
 
 /// <summary>Single message in the AI chat (user or assistant).</summary>
-public class ChatMessage
+public partial class ChatMessage : ObservableObject
 {
-    public string Role { get; set; } = ""; // "user" or "assistant"
-    public string Text { get; set; } = "";
+    [ObservableProperty]
+    private string _role = ""; // "user" or "assistant"
+
+    [ObservableProperty]
+    private string _text = "";
 }

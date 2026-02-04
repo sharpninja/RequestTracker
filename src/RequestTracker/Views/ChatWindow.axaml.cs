@@ -2,6 +2,7 @@ using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using RequestTracker.Models;
 
@@ -12,9 +13,80 @@ public partial class ChatWindow : Window
     public ChatWindow()
     {
         InitializeComponent();
+        // Build row definitions from saved settings so row 1 height is correct before any layout.
+        InitializeGridRows();
+        ApplyLayoutSettings();
         Opened += OnOpened;
         Closing += OnClosing;
+        Loaded += OnLoaded;
     }
+
+    private void InitializeGridRows()
+    {
+        if (ChatMainGrid == null) return;
+        var s = LayoutSettingsIo.Load();
+        GridLength row1Length = s?.ChatTemplatePickerRowHeight != null
+            ? s.ChatTemplatePickerRowHeight.ToGridLength()
+            : new GridLength(1, GridUnitType.Star);
+        ChatMainGrid.RowDefinitions.Clear();
+        ChatMainGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));      // 0: toolbar
+        ChatMainGrid.RowDefinitions.Add(new RowDefinition(row1Length));         // 1: template picker
+        ChatMainGrid.RowDefinitions.Add(new RowDefinition(new GridLength(4)));   // 2: splitter
+        ChatMainGrid.RowDefinitions.Add(new RowDefinition(1, GridUnitType.Star)); // 3: messages
+        ChatMainGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));      // 4: input
+    }
+
+    private void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (ChatTemplateSplitter != null)
+        {
+            ChatTemplateSplitter.PointerCaptureLost += OnChatSplitterPointerCaptureLost;
+        }
+        // Sync row height with initial expander state.
+        if (PromptTemplatesExpander != null)
+        {
+            if (PromptTemplatesExpander.IsExpanded)
+                ApplyTemplatePickerSplitterOnly();
+            else
+                SetTemplatePickerRowToAuto();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(() => ApplyTemplatePickerSplitterOnly(), DispatcherPriority.Loaded);
+        }
+    }
+
+    private void OnPromptTemplatesCollapsed(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        SetTemplatePickerRowToAuto();
+    }
+
+    private void OnPromptTemplatesExpanded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ApplyTemplatePickerSplitterSettings(LayoutSettingsIo.Load());
+    }
+
+    /// <summary>Minimum height for the template-picker row when collapsed so the expander header isn't clipped by the splitter.</summary>
+    private const double TemplatePickerRowMinHeightCollapsed = 40;
+
+    private void SetTemplatePickerRowToAuto()
+    {
+        try
+        {
+            if (ChatMainGrid?.RowDefinitions == null || ChatMainGrid.RowDefinitions.Count < 5)
+                return;
+            var row = new RowDefinition(GridLength.Auto);
+            row.MinHeight = TemplatePickerRowMinHeightCollapsed;
+            ChatMainGrid.RowDefinitions[1] = row;
+            ChatMainGrid.InvalidateMeasure();
+            ChatMainGrid.InvalidateArrange();
+        }
+        catch { }
+    }
+
+    private void OnChatSplitterPointerReleased(object? sender, PointerReleasedEventArgs e) => SaveLayoutSettings();
+
+    private void OnChatSplitterPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e) => SaveLayoutSettings();
 
     private void OnOpened(object? sender, EventArgs e)
     {
@@ -48,7 +120,7 @@ public partial class ChatWindow : Window
                 Position = new PixelPoint((int)s.ChatWindowX, (int)s.ChatWindowY);
             ApplyTemplatePickerSplitterSettings(s);
         }
-        catch { /* ignore */ }
+        catch { }
     }
 
     private void ApplyTemplatePickerSplitterSettings(LayoutSettings? s)
@@ -57,9 +129,23 @@ public partial class ChatWindow : Window
         {
             if (s == null || ChatMainGrid?.RowDefinitions == null || ChatMainGrid.RowDefinitions.Count < 5)
                 return;
-            ChatMainGrid.RowDefinitions[1].Height = s.ChatTemplatePickerRowHeight.ToGridLength();
+            var length = s.ChatTemplatePickerRowHeight.ToGridLength();
+            ChatMainGrid.RowDefinitions[1] = new RowDefinition(length);
+            ChatMainGrid.InvalidateMeasure();
+            ChatMainGrid.InvalidateArrange();
         }
-        catch { /* ignore */ }
+        catch { }
+    }
+
+    private void ApplyTemplatePickerSplitterOnly()
+    {
+        try
+        {
+            var s = LayoutSettingsIo.Load();
+            if (s != null)
+                ApplyTemplatePickerSplitterSettings(s);
+        }
+        catch { }
     }
 
     private void SaveLayoutSettings()
@@ -74,7 +160,7 @@ public partial class ChatWindow : Window
             SaveTemplatePickerSplitterSettings(s);
             LayoutSettingsIo.Save(s);
         }
-        catch { /* ignore */ }
+        catch { }
     }
 
     private void SaveTemplatePickerSplitterSettings(LayoutSettings s)
@@ -83,9 +169,13 @@ public partial class ChatWindow : Window
         {
             if (ChatMainGrid?.RowDefinitions == null || ChatMainGrid.RowDefinitions.Count < 5)
                 return;
-            s.ChatTemplatePickerRowHeight = GridLengthDto.FromGridLength(ChatMainGrid.RowDefinitions[1].Height);
+            // Only persist row height when expander is expanded (so we don't save Auto).
+            if (PromptTemplatesExpander != null && !PromptTemplatesExpander.IsExpanded)
+                return;
+            var current = ChatMainGrid.RowDefinitions[1].Height;
+            s.ChatTemplatePickerRowHeight = GridLengthDto.FromGridLength(current);
         }
-        catch { /* ignore */ }
+        catch { }
     }
 
     private static PromptTemplate? GetPromptFromSource(object? source)

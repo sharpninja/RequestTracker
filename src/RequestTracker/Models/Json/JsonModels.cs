@@ -103,30 +103,33 @@ namespace RequestTracker.Models.Json
         public string Branch { get; set; } = "";
     }
 
-    /// <summary>Allows workspace to be either an object, a string (e.g. path), or other value in Copilot session JSON.</summary>
+    /// <summary>Allows workspace to be either an object, a string (e.g. path), or other value in Copilot session JSON. Tolerates object properties with non-string values (e.g. numbers).</summary>
     public sealed class WorkspaceInfoConverter : JsonConverter<WorkspaceInfo?>
     {
-        /// <summary>Options without this converter to avoid infinite recursion when deserializing a nested object.</summary>
-        private static readonly JsonSerializerOptions InnerOptions = new()
-        {
-            PropertyNameCaseInsensitive = true
-        };
-
         public override WorkspaceInfo? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             switch (reader.TokenType)
             {
                 case JsonTokenType.Null:
-                    reader.Read(); // advance past null to avoid infinite recursion
+                    reader.Read();
                     return null;
                 case JsonTokenType.String:
                     var path = reader.GetString();
                     return string.IsNullOrEmpty(path) ? null : new WorkspaceInfo { Project = path };
                 case JsonTokenType.StartObject:
-                    // Must NOT pass 'options' here: it contains this converter, so Deserialize would call Read again → stack overflow
-                    return JsonSerializer.Deserialize<WorkspaceInfo>(ref reader, InnerOptions);
+                    using (var doc = JsonDocument.ParseValue(ref reader))
+                    {
+                        var root = doc.RootElement;
+                        return new WorkspaceInfo
+                        {
+                            Project = GetStringFromElement(root, "project"),
+                            TargetFramework = GetStringFromElement(root, "targetFramework"),
+                            Repository = GetStringFromElement(root, "repository"),
+                            Branch = GetStringFromElement(root, "branch")
+                        };
+                    }
                 case JsonTokenType.Number:
-                    try { _ = reader.GetDouble(); } catch { /* consume and ignore */ }
+                    try { _ = reader.GetDouble(); } catch { /* consume */ }
                     return null;
                 case JsonTokenType.True:
                 case JsonTokenType.False:
@@ -136,10 +139,39 @@ namespace RequestTracker.Models.Json
                     reader.Skip();
                     return null;
                 default:
-                    // Any other token (Comment, etc.): advance by one so the reader progresses
                     reader.Read();
                     return null;
             }
+        }
+
+        private static string GetStringFromElement(JsonElement element, string propertyName)
+        {
+            if (!TryGetPropertyIgnoreCase(element, propertyName, out var prop))
+                return "";
+            return prop.ValueKind switch
+            {
+                JsonValueKind.String => prop.GetString() ?? "",
+                JsonValueKind.Number => prop.TryGetInt64(out var i) ? i.ToString() : prop.GetDouble().ToString(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => "",
+                JsonValueKind.Object or JsonValueKind.Array => "", // ignore nested structures
+                _ => prop.GetRawText().Trim('"')
+            };
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+        {
+            foreach (var p in element.EnumerateObject())
+            {
+                if (string.Equals(p.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = p.Value;
+                    return true;
+                }
+            }
+            value = default;
+            return false;
         }
 
         public override void Write(Utf8JsonWriter writer, WorkspaceInfo? value, JsonSerializerOptions options)

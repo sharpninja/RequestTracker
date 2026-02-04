@@ -3,6 +3,7 @@
         xmlns:vm="using:RequestTracker.ViewModels"
         xmlns:models="using:RequestTracker.Models"
         xmlns:conv="using:RequestTracker.Converters"
+        xmlns:md="clr-namespace:Markdown.Avalonia;assembly=Markdown.Avalonia"
         x:Class="RequestTracker.Views.ChatWindow"
         x:DataType="vm:ChatWindowViewModel"
         Title="AI Assistant"
@@ -13,34 +14,45 @@
 
     <Window.Resources>
         <conv:RoleToBrushConverter x:Key="RoleToBrush"/>
+        <conv:RoleToVisibilityConverter x:Key="RoleToVisibility"/>
     </Window.Resources>
 
     <Design.DataContext>
         <vm:ChatWindowViewModel/>
     </Design.DataContext>
 
-    <Grid x:Name="ChatMainGrid" RowDefinitions="Auto, 1*, 4, *, Auto">
+    <Grid x:Name="ChatMainGrid">
         <Border Grid.Row="0" Background="#f0f0f0" Padding="8,6" BorderBrush="#ddd" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto, *">
+            <Grid ColumnDefinitions="Auto, *, Auto, Auto">
                 <TextBlock Grid.Column="0" Text="Model:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="14"/>
                 <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableModels}" SelectedItem="{Binding SelectedModel}"
                           MinWidth="180" HorizontalAlignment="Left" FontSize="14"/>
+                <Button Grid.Column="2" Command="{Binding OpenAgentConfigCommand}" Margin="8,0,0,0" ToolTip.Tip="Open agent config in default editor">
+                    <TextBlock Text="Agent config" FontSize="12"/>
+                </Button>
+                <Button Grid.Column="3" Command="{Binding OpenPromptTemplatesCommand}" Margin="4,0,0,0" ToolTip.Tip="Open prompt templates in default editor">
+                    <TextBlock Text="Prompts" FontSize="12"/>
+                </Button>
             </Grid>
         </Border>
-        <Border Grid.Row="1" Background="#fafafa" Padding="4,2" BorderBrush="#eee" BorderThickness="0,0,0,1">
+        <Expander Grid.Row="1" x:Name="PromptTemplatesExpander" Header="Prompt templates" IsExpanded="True"
+                  HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                  Background="#fafafa" Padding="8,6" BorderBrush="#eee" BorderThickness="0,0,0,1"
+                  MinHeight="40"
+                  Expanded="OnPromptTemplatesExpanded" Collapsed="OnPromptTemplatesCollapsed">
             <Grid RowDefinitions="Auto, *">
-                <TextBlock Grid.Row="0" Text="Prompts (click to fill, double-click to send)" FontSize="12" Foreground="Gray" Margin="0,0,0,2"/>
+                <TextBlock Grid.Row="0" Text="Click to fill input, double-click to send." FontSize="12" Foreground="Gray" Margin="0,0,0,4"/>
                 <ListBox Grid.Row="1" ItemsSource="{Binding PromptTemplates}" Margin="0" Padding="0"
                          Tapped="OnPromptListTapped" DoubleTapped="OnPromptListDoubleTapped">
                     <ListBox.ItemTemplate>
                         <DataTemplate DataType="models:PromptTemplate">
-                            <TextBlock Text="{Binding Name}" FontSize="14" Padding="2,1"/>
+                            <TextBlock Text="{Binding Name}" FontSize="14" Padding="2,0"/>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
             </Grid>
-        </Border>
-        <GridSplitter Grid.Row="2" ResizeDirection="Rows" Background="LightGray" Height="4"/>
+        </Expander>
+        <GridSplitter Grid.Row="2" x:Name="ChatTemplateSplitter" ResizeDirection="Rows" Background="LightGray" Height="4" PointerReleased="OnChatSplitterPointerReleased"/>
         <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                       Margin="8" x:Name="MessageScroll">
             <ItemsControl ItemsSource="{Binding Messages}">
@@ -51,7 +63,10 @@
                             <StackPanel Spacing="4">
                                 <TextBlock FontWeight="SemiBold" FontSize="14" Foreground="Gray"
                                            Text="{Binding Role}"/>
-                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="16"/>
+                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="16"
+                                           IsVisible="{Binding Role, Converter={StaticResource RoleToVisibility}, ConverterParameter=user}"/>
+                                <md:MarkdownScrollViewer Markdown="{Binding Text}" Margin="0"
+                                           IsVisible="{Binding Role, Converter={StaticResource RoleToVisibility}, ConverterParameter=assistant}"/>
                             </StackPanel>
                         </Border>
                     </DataTemplate>

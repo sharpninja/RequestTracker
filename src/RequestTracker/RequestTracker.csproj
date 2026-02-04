@@ -35,4 +35,8 @@
     <PackageReference Include="Handlebars.Net" Version="2.1.6" />
     <PackageReference Include="YamlDotNet" Version="15.1.0" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Local copy (submodule) for debugging/fixes -->
+    <ProjectReference Include="..\..\lib\Markdown.Avalonia\Markdown.Avalonia\Markdown.Avalonia.csproj" />
+  </ItemGroup>
 </Project>

@@ -24,6 +24,7 @@ namespace RequestTracker.Models.Json
         [JsonConverter(typeof(FlexibleInt32Converter))]
         public int TotalTokens { get; set; }
 
+        [JsonConverter(typeof(WorkspaceInfoConverter))]
         public WorkspaceInfo? Workspace { get; set; }
 
         public List<UnifiedRequestEntry> Entries { get; set; } = new();
@@ -263,63 +264,31 @@ namespace RequestTracker.Models.Json
         /// </summary>
         private static List<UnifiedAction> ParseActionsForCopilot(object? actionsObj, string? requestId)
         {
-            const string prefix = "[Copilot Actions]";
-            requestId ??= "(null)";
-
             if (actionsObj == null)
-            {
-                Console.WriteLine($"{prefix} RequestId={requestId}: input is null, returning 0 actions.");
                 return new List<UnifiedAction>();
-            }
 
             if (actionsObj is JsonElement element)
             {
-                Console.WriteLine($"{prefix} RequestId={requestId}: input type=JsonElement ValueKind={element.ValueKind}");
-                if (element.ValueKind == JsonValueKind.Array)
-                {
-                    int len = element.GetArrayLength();
-                    Console.WriteLine($"{prefix} RequestId={requestId}: array length={len}");
-                }
-                else
-                {
-                    Console.WriteLine($"{prefix} RequestId={requestId}: raw snippet={Truncate(element.ToString(), 200)}");
-                }
-
                 var list = new List<UnifiedAction>();
                 ParseActionsFromElement(element, list);
-
-                Console.WriteLine($"{prefix} RequestId={requestId}: parsed {list.Count} actions.");
-                for (int i = 0; i < list.Count; i++)
-                {
-                    var a = list[i];
-                    Console.WriteLine($"{prefix}   [{i + 1}] Order={a.Order} Type={a.Type} Status={a.Status} FilePath={a.FilePath} Description={Truncate(a.Description ?? "", 80)}");
-                }
                 return list.OrderBy(x => x.Order).ToList();
             }
 
             if (actionsObj is string jsonString)
             {
-                Console.WriteLine($"{prefix} RequestId={requestId}: input type=string length={jsonString?.Length ?? 0} snippet={Truncate(jsonString ?? "", 200)}");
                 var list = new List<UnifiedAction>();
                 try
                 {
                     using var doc = JsonDocument.Parse(jsonString ?? "[]");
                     ParseActionsFromElement(doc.RootElement, list);
-                    Console.WriteLine($"{prefix} RequestId={requestId}: parsed {list.Count} actions from string JSON.");
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        var a = list[i];
-                        Console.WriteLine($"{prefix}   [{i + 1}] Order={a.Order} Type={a.Type} Status={a.Status} FilePath={a.FilePath} Description={Truncate(a.Description ?? "", 80)}");
-                    }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"{prefix} RequestId={requestId}: failed to parse actions string: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Copilot actions parse failed RequestId={requestId}: {ex.Message}");
                 }
                 return list.OrderBy(a => a.Order).ToList();
             }
 
-            Console.WriteLine($"{prefix} RequestId={requestId}: input type={actionsObj.GetType().Name} (unhandled), returning 0 actions.");
             return new List<UnifiedAction>();
         }
 

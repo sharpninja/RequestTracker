@@ -137,6 +137,6 @@ public static class AgentConfigIo
     private static string GetDefaultContent()
     {
         // Use explicit \n so saved file has consistent line endings (no stray CRLF).
-        return "---\nmodel: llama3\n---\n\n# Agent configuration\n\nInstructions and context for the AI assistant. This file is sent to the agent when you open the chat and when context is refreshed.\n\n- Add project-specific instructions here.\n- Describe how you want the agent to interpret the request log (e.g. focus on errors, summarize by day).\n\nPrompt templates are in prompt_templates.yaml (same folder). Context is sent to the model with each query; single-click to fill input, double-click to send.\n";
+        return "---\nmodel: llama3:latest\n---\n\n# Agent configuration\n\nInstructions and context for the AI assistant. This file is sent to the agent when you open the chat and when context is refreshed.\n\n- Add project-specific instructions here.\n- Describe how you want the agent to interpret the request log (e.g. focus on errors, summarize by day).\n\nPrompt templates are in prompt_templates.yaml (same folder). Context is sent to the model with each query; single-click to fill input, double-click to send.\n";
     }
 }

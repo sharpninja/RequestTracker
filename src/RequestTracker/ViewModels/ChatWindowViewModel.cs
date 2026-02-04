@@ -1,5 +1,8 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
@@ -46,6 +49,54 @@ public partial class ChatWindowViewModel : ViewModelBase
 
     /// <summary>Parameterless constructor for design-time only.</summary>
     public ChatWindowViewModel() : this(new OllamaLogAgentService(), () => "", null, null) { }
+
+    [RelayCommand]
+    private void OpenAgentConfig()
+    {
+        AgentConfigIo.EnsureExists();
+        OpenFileInDefaultEditor(AgentConfigIo.GetFilePath(), "config");
+    }
+
+    [RelayCommand]
+    private void OpenPromptTemplates()
+    {
+        PromptTemplatesIo.EnsureExists();
+        OpenFileInDefaultEditor(PromptTemplatesIo.GetFilePath(), "prompts");
+    }
+
+    private static void OpenFileInDefaultEditor(string path, string label)
+    {
+        if (!File.Exists(path))
+            return;
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c start \"\" \"{fullPath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+            }
+            else
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "xdg-open",
+                    Arguments = fullPath,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+            }
+        }
+        catch
+        {
+            // Ignore
+        }
+    }
 
     /// <summary>Loads prompt templates from agent config. Call when the chat window is opened.</summary>
     public void LoadPrompts()
@@ -139,17 +190,30 @@ public partial class ChatWindowViewModel : ViewModelBase
         _sendCts = new CancellationTokenSource();
         var token = _sendCts.Token;
 
+        var assistantMsg = new ChatMessage { Role = "assistant", Text = "" };
+        DispatchToUi(() => Messages.Add(assistantMsg));
+
+        IProgress<string>? progress = null;
+        progress = new Progress<string>(content =>
+        {
+            DispatchToUi(() =>
+            {
+                if (!token.IsCancellationRequested && Messages.Contains(assistantMsg))
+                    assistantMsg.Text = content ?? "";
+            });
+        });
+
         try
         {
             var model = SelectedModel;
-            var reply = await Task.Run(() => _agentService.SendMessageAsync(text, context, model, token), token).ConfigureAwait(false);
+            var reply = await Task.Run(() => _agentService.SendMessageAsync(text, context, model, progress, token), token).ConfigureAwait(false);
 
             if (token.IsCancellationRequested) return;
 
             DispatchToUi(() =>
             {
                 if (token.IsCancellationRequested) return;
-                Messages.Add(new ChatMessage { Role = "assistant", Text = reply ?? "" });
+                assistantMsg.Text = reply ?? "";
                 IsLoading = false;
                 SendCommand.NotifyCanExecuteChanged();
             });
@@ -158,7 +222,7 @@ public partial class ChatWindowViewModel : ViewModelBase
         {
             DispatchToUi(() =>
             {
-                Messages.Add(new ChatMessage { Role = "assistant", Text = "[Cancelled]" });
+                assistantMsg.Text = "[Cancelled]";
                 IsLoading = false;
                 SendCommand.NotifyCanExecuteChanged();
             });
@@ -167,7 +231,7 @@ public partial class ChatWindowViewModel : ViewModelBase
         {
             DispatchToUi(() =>
             {
-                Messages.Add(new ChatMessage { Role = "assistant", Text = "Error: " + ex.Message });
+                assistantMsg.Text = "Error: " + ex.Message;
                 IsLoading = false;
                 SendCommand.NotifyCanExecuteChanged();
             });

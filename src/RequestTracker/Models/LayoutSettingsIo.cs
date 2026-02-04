@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using Avalonia.Controls;
 
 namespace RequestTracker.Models;
 
@@ -21,9 +22,17 @@ public static class LayoutSettingsIo
         try
         {
             var path = GetSettingsFilePath();
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path))
+                return null;
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<LayoutSettings>(json);
+            var settings = JsonSerializer.Deserialize<LayoutSettings>(json);
+            if (settings?.ChatTemplatePickerRowHeight != null)
+            {
+                var dto = settings.ChatTemplatePickerRowHeight;
+                if (dto.UnitType == GridUnitType.Star && dto.Value > 20)
+                    settings.ChatTemplatePickerRowHeight = new GridLengthDto(dto.Value, GridUnitType.Pixel);
+            }
+            return settings;
         }
         catch
         {
@@ -39,9 +48,6 @@ public static class LayoutSettingsIo
             var json = JsonSerializer.Serialize(settings);
             File.WriteAllText(path, json);
         }
-        catch
-        {
-            // Ignore
-        }
+        catch { }
     }
 }

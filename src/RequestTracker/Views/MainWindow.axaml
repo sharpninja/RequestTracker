@@ -7,6 +7,9 @@
         xmlns:jsonModels="using:RequestTracker.Models.Json"
         xmlns:conv="using:RequestTracker.Converters"
         xmlns:views="using:RequestTracker.Views"
+        xmlns:md="clr-namespace:Markdown.Avalonia;assembly=Markdown.Avalonia"
+        xmlns:ctxt="clr-namespace:ColorTextBlock.Avalonia;assembly=ColorTextBlock.Avalonia"
+        xmlns:avedit="https://github.com/avaloniaui/avaloniaedit"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="RequestTracker.Views.MainWindow"
         x:Name="Root"
@@ -14,7 +17,6 @@
         Icon="/Assets/avalonia-logo.ico"
         Title="RequestTracker"
         Width="1000" Height="700"
-        WindowStartupLocation="CenterScreen"
         WindowState="Normal"
         ShowInTaskbar="True">
 
@@ -23,15 +25,30 @@
         <conv:EqualityToBrushConverter x:Key="EqualityToBrush"/>
         <conv:EmptyStringToAllConverter x:Key="EmptyStringToAll"/>
         <conv:FileNodeToArchiveVisibleConverter x:Key="FileNodeToArchiveVisible"/>
+        <!-- Fixed-width font for markdown code blocks (inline and fenced). Change this to specify a different monospace font. -->
+        <FontFamily x:Key="MarkdownCodeFontFamily">Cascadia Code, Monospace</FontFamily>
     </Window.Resources>
+    <Window.Styles>
+        <!-- Apply code font to markdown viewer code blocks (app-wide so we override library styles) -->
+        <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CCode">
+            <Setter Property="MonospaceFontFamily" Value="{StaticResource MarkdownCodeFontFamily}"/>
+        </Style>
+        <Style Selector=".Markdown_Avalonia_MarkdownViewer TextBlock.CodeBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MarkdownCodeFontFamily}"/>
+        </Style>
+        <Style Selector=".Markdown_Avalonia_MarkdownViewer .CodeBlock avedit|TextEditor">
+            <Setter Property="FontFamily" Value="{StaticResource MarkdownCodeFontFamily}"/>
+        </Style>
+    </Window.Styles>
 
     <Design.DataContext>
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <Grid x:Name="MainGrid" ColumnDefinitions="300, 4, *" RowDefinitions="*, 4, 150">
+    <Grid x:Name="MainGrid" ColumnDefinitions="300, 4, *" RowDefinitions="*, 4, 150, Auto">
         <!-- Tree View -->
-        <TreeView x:Name="TreePanel" Grid.Column="0" Grid.Row="0" ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}">
+        <TreeView x:Name="TreePanel" Grid.Column="0" Grid.Row="0" ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}" Tapped="OnFileTreeTapped"
+                  VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
             <TreeView.ItemTemplate>
                 <TreeDataTemplate ItemsSource="{Binding Children}" DataType="models:FileNode">
                     <TextBlock Text="{Binding Name}"/>
@@ -62,16 +79,16 @@
 
         <!-- History Panel -->
         <Border x:Name="HistoryPanel" Grid.Column="0" Grid.Row="2" BorderBrush="Gray" BorderThickness="0,1,0,0">
-            <ListBox ItemsSource="{Binding ChangeLog}" Background="#f8f8f8"/>
+            <ListBox ItemsSource="{Binding ChangeLog}" Background="Transparent"/>
         </Border>
 
         <!-- Splitter 2 (Horizontal separator between Panes in Landscape / Bottom separator in Portrait) -->
         <GridSplitter x:Name="Splitter2" Grid.Column="1" Grid.Row="0" Grid.RowSpan="3" ResizeDirection="Columns" Background="LightGray"/>
 
-        <!-- Viewer Panel -->
-        <Grid x:Name="ViewerPanel" Grid.Column="2" Grid.Row="0" Grid.RowSpan="3" RowDefinitions="Auto, *, Auto">
+        <!-- Viewer Panel (status bar is in MainGrid row 3) -->
+        <Grid x:Name="ViewerPanel" Grid.Column="2" Grid.Row="0" Grid.RowSpan="3" RowDefinitions="Auto, *">
              <!-- Navigation Toolbar -->
-             <Grid Grid.Row="0" ColumnDefinitions="Auto, Auto, Auto, Auto, Auto, Auto, *" Margin="5">
+             <Grid Grid.Row="0" ColumnDefinitions="Auto, Auto, Auto, Auto, *" Margin="5">
                 <Button Grid.Column="0" Command="{Binding NavigateBackCommand}" Margin="0,0,5,0" Width="30" ToolTip.Tip="Back">
                     <PathIcon Data="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" Width="10" Height="10"/>
                 </Button>
@@ -81,58 +98,67 @@
                 <Button Grid.Column="2" Command="{Binding RefreshCommand}" Margin="0,0,5,0" Width="30" ToolTip.Tip="Refresh">
                     <PathIcon Data="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z" Width="10" Height="10"/>
                 </Button>
-                <Button Grid.Column="3" Command="{Binding OpenAgentConfigCommand}" Margin="0,0,5,0" ToolTip.Tip="Open agent config in default editor">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <PathIcon Data="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" Width="14" Height="14"/>
-                        <TextBlock Text="Agent config" VerticalAlignment="Center" FontSize="12"/>
-                    </StackPanel>
-                </Button>
-                <Button Grid.Column="4" Command="{Binding OpenPromptTemplatesCommand}" Margin="0,0,5,0" ToolTip.Tip="Open prompt templates in default editor">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <PathIcon Data="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" Width="14" Height="14"/>
-                        <TextBlock Text="Prompts" VerticalAlignment="Center" FontSize="12"/>
-                    </StackPanel>
-                </Button>
-                <Button Grid.Column="5" Click="OpenChatWindow" Margin="0,0,5,0" ToolTip.Tip="AI Assistant">
+                <Button Grid.Column="3" Click="OpenChatWindow" Margin="0,0,5,0" ToolTip.Tip="AI Assistant">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <PathIcon Data="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM12,20c-4.41,0 -8,-3.59 -8,-8s3.59,-8 8,-8 8,3.59 8,8 -3.59,8 -8,8zM12.5,7H11v6l5.25,3.15 0.75,-1.23 -4.5,-2.67z" Width="14" Height="14"/>
                         <TextBlock Text="AI" VerticalAlignment="Center" FontSize="12"/>
                     </StackPanel>
                 </Button>
-                <TextBox Grid.Column="6" Text="{Binding SelectedNodePathDisplay, Mode=OneWay, Converter={StaticResource PathToWsl}}" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                <TextBox Grid.Column="4" Text="{Binding SelectedNodePathDisplay, Mode=OneWay, Converter={StaticResource PathToWsl}}" IsReadOnly="True" VerticalContentAlignment="Center"/>
              </Grid>
 
-             <!-- Markdown View (raw markdown only) -->
-             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsMarkdownVisible}">
+             <!-- Markdown View -->
+             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" IsVisible="{Binding IsMarkdownVisible}">
                 <Grid x:Name="MarkdownContentGrid" RowDefinitions="Auto, *">
-                    <TextBlock Grid.Row="0" Text="Loading…" IsVisible="{Binding ShowMarkdownLoadingPlaceholder}"
+                    <Border Grid.Row="0">
+                    <TextBlock Text="Loading…" IsVisible="{Binding ShowMarkdownLoadingPlaceholder}"
                                VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="Gray" Margin="12"/>
-                    <Border Grid.Row="1" IsVisible="{Binding IsPreviewOpenedInBrowser}" Background="White" Padding="0">
+                    </Border>
+                    <Border Grid.Row="1" IsVisible="{Binding IsPreviewOpenedInBrowser}" Padding="0">
                         <Grid RowDefinitions="Auto, *">
-                            <Border Grid.Row="0" Background="#f0f0f0" Padding="8,6" BorderBrush="#ddd" BorderThickness="0,0,0,1">
+                            <Border Grid.Row="0" Padding="8,6" BorderBrush="#ddd" BorderThickness="0,0,0,1">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button Content="Open HTML preview in browser" Command="{Binding OpenPreviewInBrowserCommand}"/>
+                                    <Button Content="Show raw text" Command="{Binding ToggleShowRawMarkdownCommand}"/>
                                     <Button Content="Archive" Command="{Binding ArchiveCommand}"/>
                                 </StackPanel>
                             </Border>
                             <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
-                                <SelectableTextBlock Text="{Binding CurrentPreviewMarkdownText}"
-                                                     TextWrapping="Wrap"
-                                                     FontFamily="Consolas, monospace"
-                                                     FontSize="15"
-                                                     Padding="12"
-                                                     Foreground="Black"/>
+                                <Grid>
+                                    <md:MarkdownScrollViewer x:Name="MarkdownViewer" Margin="12" IsVisible="{Binding ShowRenderedMarkdown}">
+                                        <md:MarkdownScrollViewer.Resources>
+                                            <FontFamily x:Key="MarkdownCodeFontFamily">Cascadia Code, Monospace</FontFamily>
+                                        </md:MarkdownScrollViewer.Resources>
+                                        <md:MarkdownScrollViewer.Styles>
+                                            <!-- Match library selector so we override; inline code (e.g. `code`) -->
+                                            <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CCode">
+                                                <Setter Property="MonospaceFontFamily" Value="{StaticResource MarkdownCodeFontFamily}"/>
+                                            </Style>
+                                            <!-- Fenced / block code (plain TextBlock) -->
+                                            <Style Selector=".Markdown_Avalonia_MarkdownViewer TextBlock.CodeBlock">
+                                                <Setter Property="FontFamily" Value="{StaticResource MarkdownCodeFontFamily}"/>
+                                            </Style>
+                                            <!-- Syntax-highlighted code (AvaloniaEdit TextEditor) -->
+                                            <Style Selector=".Markdown_Avalonia_MarkdownViewer .CodeBlock avedit|TextEditor">
+                                                <Setter Property="FontFamily" Value="{StaticResource MarkdownCodeFontFamily}"/>
+                                            </Style>
+                                        </md:MarkdownScrollViewer.Styles>
+                                    </md:MarkdownScrollViewer>
+                                    <TextBox Grid.Row="0" Margin="12" IsReadOnly="True" Text="{Binding CurrentPreviewMarkdownText}" TextWrapping="Wrap" IsVisible="{Binding ShowMarkdownAsRawText}" Background="Transparent" BorderThickness="0" FontFamily="{StaticResource MarkdownCodeFontFamily}"/>
+                                </Grid>
                             </ScrollViewer>
                         </Grid>
                     </Border>
                 </Grid>
              </Border>
 
-             <!-- JSON Tree View with Summary and Search -->
-             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsJsonVisible}">
-                <Grid x:Name="JsonViewerGrid" RowDefinitions="Auto, Auto, 2*, 4, *">
+             <!-- JSON Tree View. Single star row for tree so it fills area; search index height is fixed (splitter still resizes it). -->
+             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" IsVisible="{Binding IsJsonVisible}"
+                     VerticalAlignment="Stretch" HorizontalAlignment="Stretch" MinHeight="320">
+                <Grid x:Name="JsonViewerGrid" RowDefinitions="Auto, Auto, 200, 4, *"
+                      VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
                     <!-- Summary -->
-                    <Border Grid.Row="0" Background="#f0f0f0" Padding="8" Margin="0,0,0,4">
+                    <Border Grid.Row="0" Padding="8" Margin="0,0,0,4">
                         <ItemsControl ItemsSource="{Binding JsonLogSummary.SummaryLines}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
@@ -146,11 +172,11 @@
                         <TextBlock Grid.Column="0" Text="Search:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <TextBox Grid.Column="1" Text="{Binding SearchQuery}" Watermark="Request ID, text, model, timestamp..."/>
                     </Grid>
-                    <!-- Search results index -->
+                    <!-- Search results index. Height set from layout (default 200px); tree row is only * so it fills rest. -->
                     <Border Grid.Row="2" MinHeight="80" BorderBrush="#ddd" BorderThickness="0,0,0,1" Padding="4" Margin="0,0,0,4">
                         <Grid RowDefinitions="Auto, Auto, *">
                             <TextBlock Grid.Row="0" Text="Search index (double-click to open request)" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,4"/>
-                            <Border Grid.Row="1" Background="#E8E8E8" BorderBrush="#C0C0C0" BorderThickness="0,0,0,1" Padding="0" Margin="0,0,0,0">
+                            <Border Grid.Row="1" BorderBrush="#C0C0C0" BorderThickness="0,0,0,1" Padding="0" Margin="0,0,0,0">
                                 <Grid RowDefinitions="Auto, Auto" ColumnDefinitions="250,*,100,100,130" Margin="4,2">
                                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Request ID" FontWeight="SemiBold" FontSize="13" FontFamily="Consolas, Monospace" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     <TextBlock Grid.Row="0" Grid.Column="1" Text="Display" FontWeight="SemiBold" FontSize="13" FontFamily="Consolas, Monospace" VerticalAlignment="Center" Margin="0,0,8,0"/>
@@ -228,39 +254,52 @@
                     </Border>
                     <!-- Splitter between search index and JSON tree -->
                     <GridSplitter Grid.Row="3" ResizeDirection="Rows" Background="LightGray" Height="4"/>
-                    <!-- Tree -->
-                    <TreeView Grid.Row="4" ItemsSource="{Binding JsonTree}" SelectedItem="{Binding SelectedJsonNode}">
-                        <TreeView.ItemTemplate>
-                            <TreeDataTemplate ItemsSource="{Binding Children}" DataType="jsonModels:JsonTreeNode">
-                                <StackPanel Orientation="Horizontal" Spacing="5" Background="Transparent" DoubleTapped="OnJsonNodeDoubleTapped">
-                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#007acc"/>
-                                    <TextBlock Text=":" Foreground="Gray"/>
-                                    <TextBlock Text="{Binding Value}" Foreground="#ce9178"/>
-                                    <TextBlock Text="{Binding Type}" Foreground="Gray" FontStyle="Italic" FontSize="12" VerticalAlignment="Center" Margin="5,0,0,0"/>
-                                </StackPanel>
-                            </TreeDataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
+                    <!-- Tree. TreeView directly in cell so it gets full star-row height; TreeView scrolls internally. -->
+                    <Border Grid.Row="4" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" MinHeight="180">
+                        <TreeView x:Name="JsonTreeView" ItemsSource="{Binding JsonTree}" SelectedItem="{Binding SelectedJsonNode}"
+                                  VerticalAlignment="Stretch" HorizontalAlignment="Stretch" MinHeight="180">
+                            <TreeView.ItemTemplate>
+                                <TreeDataTemplate ItemsSource="{Binding Children}" DataType="jsonModels:JsonTreeNode">
+                                    <StackPanel Orientation="Horizontal" Spacing="5" Background="Transparent" DoubleTapped="OnJsonNodeDoubleTapped">
+                                        <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#007acc"/>
+                                        <TextBlock Text=":" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding Value}" Foreground="#ce9178"/>
+                                        <TextBlock Text="{Binding Type}" Foreground="Gray" FontStyle="Italic" FontSize="12" VerticalAlignment="Center" Margin="5,0,0,0"/>
+                                    </StackPanel>
+                                </TreeDataTemplate>
+                            </TreeView.ItemTemplate>
+                            <TreeView.ItemContainerTheme>
+                                <ControlTheme TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}" x:DataType="jsonModels:JsonTreeNode">
+                                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                                </ControlTheme>
+                            </TreeView.ItemContainerTheme>
+                        </TreeView>
+                    </Border>
                 </Grid>
              </Border>
 
              <!-- Request Details View -->
-             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" Background="White" IsVisible="{Binding IsRequestDetailsVisible}">
+             <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" Margin="5" IsVisible="{Binding IsRequestDetailsVisible}">
                 <Grid RowDefinitions="Auto, *">
-                    <Grid Grid.Row="0" ColumnDefinitions="Auto, Auto, Auto, *" Margin="5" VerticalAlignment="Center">
+                    <Border Grid.Row="0">
+                    <Grid ColumnDefinitions="Auto, Auto, Auto, *" Margin="5" VerticalAlignment="Center">
                         <Button Grid.Column="0" Content="← Back to List" Command="{Binding CloseRequestDetailsCommand}" Margin="0,0,10,0"/>
                         <Button Grid.Column="1" Content="← Previous" Command="{Binding NavigateToPreviousRequestCommand}" Margin="0,0,10,0"/>
                         <Button Grid.Column="2" Content="Next →" Command="{Binding NavigateToNextRequestCommand}" Margin="0,0,10,0"/>
                     </Grid>
-                    <views:RequestDetailsView Grid.Row="1" DataContext="{Binding SelectedUnifiedRequest}"/>
+                    </Border>
+                    <Border Grid.Row="1">
+                    <views:RequestDetailsView DataContext="{Binding SelectedUnifiedRequest}"/>
+                    </Border>
                 </Grid>
              </Border>
 
-             <!-- Status Bar -->
-             <Border Grid.Row="2" Background="#007acc" Padding="5">
-                 <SelectableTextBlock Text="{Binding StatusMessage}" Foreground="White" FontWeight="Bold"/>
-             </Border>
         </Grid>
+
+        <!-- Status Bar. Bottom of window for both orientations; row/column set in code-behind -->
+        <Border x:Name="StatusBarBorder" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Padding="8,6">
+            <SelectableTextBlock Text="{Binding StatusMessage}" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+        </Border>
     </Grid>
 
 </Window>

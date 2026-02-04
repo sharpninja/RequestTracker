@@ -117,7 +117,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private JsonTreeNode? _selectedJsonNode;
 
     [ObservableProperty]
-    private string _statusMessage = "";
+    private string _statusMessage = "Status";
 
     /// <summary>True when markdown preview was opened in the system browser.</summary>
     [ObservableProperty]
@@ -131,11 +131,22 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private string? _currentPreviewHtmlPath;
 
+    /// <summary>When true, show markdown as raw text instead of rendered (use if a doc does not display).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowRenderedMarkdown))]
+    private bool _showMarkdownAsRawText;
+
+    /// <summary>True when the rendered markdown viewer should be visible (inverse of ShowMarkdownAsRawText).</summary>
+    public bool ShowRenderedMarkdown => !ShowMarkdownAsRawText;
+
     /// <summary>Raw markdown of the selected file when preview is opened externally.</summary>
     [ObservableProperty]
     private string _currentPreviewMarkdownText = "";
 
     private string? _currentMarkdownPath;
+
+    /// <summary>Path we last navigated to; used to avoid reloading markdown when selection is restored to same path (e.g. after tree rebuild).</summary>
+    private string? _lastNavigatedPath;
 
     private CancellationTokenSource? _markdownPreviewCts;
 
@@ -174,27 +185,39 @@ public partial class MainWindowViewModel : ViewModelBase
                 OllamaLogAgentService.TryStartOllamaIfNeeded();
 
                 string resolvedPath = GetResolvedTargetPath();
-                var (allJsonNode, rootDto) = BuildTreeOffThread(resolvedPath);
+                var (allJsonNode, rootDto, documentsDto, sourceDto) = BuildTreeOffThread(resolvedPath);
                 SetupWatcher(); // lightweight; can run on background
                 DispatchToUi(() =>
                 {
                     try
                     {
+                        var previousPath = SelectedNode?.Path;
                         Nodes.Clear();
                         Nodes.Add(allJsonNode);
+                        if (documentsDto != null)
+                        {
+                            var documentsNode = ApplyTreeDtoToNodes(documentsDto);
+                            documentsNode.Name = "Documents";
+                            Nodes.Add(documentsNode);
+                        }
+                        if (sourceDto != null)
+                        {
+                            var sourceNode = ApplyTreeDtoToNodes(sourceDto);
+                            sourceNode.Name = "Source";
+                            Nodes.Add(sourceNode);
+                        }
                         if (rootDto != null)
                         {
                             var root = ApplyTreeDtoToNodes(rootDto);
                             Nodes.Add(root);
-                            SelectedNode = allJsonNode;
                             SetStatus($"Loaded: {resolvedPath}");
                         }
                         else
                         {
                             Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
-                            SelectedNode = allJsonNode;
                             SetStatus($"Directory not found: {resolvedPath}");
                         }
+                        RestoreTreeSelection(previousPath, allJsonNode);
                     }
                     catch (Exception ex)
                     {
@@ -391,6 +414,33 @@ public partial class MainWindowViewModel : ViewModelBase
     /// <summary>Register or clear the context consumer (chat window). When set, we call it when the user navigates to JSON or details.</summary>
     public void SetContextConsumer(Action<string>? consumer) => _contextConsumer = consumer;
 
+    /// <summary>Called when the chat window is open; we set the AI model based on tree selection (e.g. codellama for source files, llama3 otherwise).</summary>
+    private Action<string>? _modelConsumer;
+
+    /// <summary>Register or clear the model consumer (chat window). When set, we call it with the desired model name when the selected node changes.</summary>
+    public void SetModelConsumer(Action<string>? consumer) => _modelConsumer = consumer;
+
+    /// <summary>Applies the model for the currently selected node (codellama for source files, llama3 for other files). Directory nodes are ignored. Call when the chat window is opened so the model matches the current selection.</summary>
+    public void ApplyModelForCurrentSelection()
+    {
+        if (SelectedNode == null || SelectedNode.IsDirectory) return;
+        bool isSourceFile = !string.IsNullOrEmpty(Path.GetExtension(SelectedNode.Path)) && IsCodeFile(Path.GetExtension(SelectedNode.Path));
+        NotifyModelConsumer(isSourceFile ? "codellama:latest" : "llama3:latest");
+    }
+
+    private void NotifyModelConsumer(string model)
+    {
+        if (_modelConsumer == null) return;
+        try
+        {
+            _modelConsumer(model);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"NotifyModelConsumer: {ex.Message}");
+        }
+    }
+
     private void NotifyContextConsumer()
     {
         if (_contextConsumer == null) return;
@@ -405,11 +455,12 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Builds a short summary of the current log view for the AI assistant (filtered entries and selected request). Includes agent config file content when present.</summary>
+    /// <summary>Builds a short summary of the current log view for the AI assistant (filtered entries and selected request). Includes agent config, docs folder, src folder, and current log view.</summary>
     public string GetLogContextForAgent()
     {
         var entries = FilteredSearchEntries ?? SearchableEntries;
         var sb = new StringBuilder();
+        string resolvedPath = GetResolvedTargetPath();
 
         var agentConfig = AgentConfigIo.ReadContent();
         if (!string.IsNullOrWhiteSpace(agentConfig))
@@ -418,6 +469,9 @@ public partial class MainWindowViewModel : ViewModelBase
             sb.AppendLine(agentConfig.Trim());
             sb.AppendLine();
         }
+
+        AppendDocsContext(sb, resolvedPath);
+        AppendSourceContext(sb, resolvedPath);
 
         // Navigation context: what the user is currently viewing
         if (IsRequestDetailsVisible)
@@ -457,6 +511,125 @@ public partial class MainWindowViewModel : ViewModelBase
             if (!string.IsNullOrWhiteSpace(r.QueryText)) sb.AppendLine($"  Query: {TruncateForContext(r.QueryText, 200)}");
         }
         return sb.ToString();
+    }
+
+    private const int MaxDocsContextChars = 12_000;
+    private const int MaxSourceContextChars = 16_000;
+    private const int MaxSourceFileLines = 400;
+
+    private static void AppendDocsContext(StringBuilder sb, string resolvedPath)
+    {
+        string? docsPath = Path.GetDirectoryName(resolvedPath);
+        if (string.IsNullOrEmpty(docsPath) || !Directory.Exists(docsPath))
+            return;
+        try
+        {
+            var files = new DirectoryInfo(docsPath).GetFiles("*.md")
+                .Where(f => !IsArchivedName(f.Name))
+                .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (files.Count == 0)
+                return;
+            sb.AppendLine("--- Documents (from docs folder) ---");
+            int remaining = MaxDocsContextChars;
+            foreach (var file in files)
+            {
+                if (remaining <= 0) break;
+                string content;
+                try
+                {
+                    content = File.ReadAllText(file.FullName);
+                }
+                catch
+                {
+                    content = $"(could not read {file.Name})";
+                }
+                string block = $"\n### {file.Name}\n{content}\n";
+                if (block.Length > remaining)
+                    block = block.AsSpan(0, remaining).ToString() + "\n...(truncated)";
+                sb.Append(block);
+                remaining -= block.Length;
+            }
+            if (remaining <= 0)
+                sb.AppendLine("\n...(docs truncated)");
+            sb.AppendLine();
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"(Docs folder unavailable: {ex.Message})");
+            sb.AppendLine();
+        }
+    }
+
+    private static void AppendSourceContext(StringBuilder sb, string resolvedPath)
+    {
+        string? sourcePath = GetSourcePath(resolvedPath);
+        if (string.IsNullOrEmpty(sourcePath) || !Directory.Exists(sourcePath))
+            return;
+        try
+        {
+            var filePaths = new List<string>();
+            CollectCodeFiles(sourcePath, filePaths, resolvedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (filePaths.Count == 0)
+                return;
+            sb.AppendLine("--- Source code (from src folder) ---");
+            int remaining = MaxSourceContextChars;
+            foreach (var path in filePaths)
+            {
+                if (remaining <= 0) break;
+                string fileName = Path.GetFileName(path);
+                string content;
+                try
+                {
+                    var lines = File.ReadAllLines(path);
+                    if (lines.Length > MaxSourceFileLines)
+                        lines = lines.Take(MaxSourceFileLines).ToArray();
+                    content = string.Join(Environment.NewLine, lines);
+                    if (content.Length > 2000)
+                        content = content.AsSpan(0, 2000).ToString() + "\n... (truncated)";
+                }
+                catch
+                {
+                    content = $"(could not read {fileName})";
+                }
+                string block = $"\n### {fileName}\n```\n{content}\n```\n";
+                if (block.Length > remaining)
+                    block = block.AsSpan(0, remaining).ToString() + "\n...(truncated)";
+                sb.Append(block);
+                remaining -= block.Length;
+            }
+            if (remaining <= 0)
+                sb.AppendLine("\n...(source truncated)");
+            sb.AppendLine();
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"(Source folder unavailable: {ex.Message})");
+            sb.AppendLine();
+        }
+    }
+
+    private static void CollectCodeFiles(string dirPath, List<string> filePaths, string sessionsPathToIgnore)
+    {
+        try
+        {
+            var dirInfo = new DirectoryInfo(dirPath);
+            foreach (var dir in dirInfo.GetDirectories())
+            {
+                if (SourceDirectoriesToSkip.Contains(dir.Name))
+                    continue;
+                var childFull = dir.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(childFull, sessionsPathToIgnore, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                CollectCodeFiles(dir.FullName, filePaths, sessionsPathToIgnore);
+            }
+            foreach (var file in dirInfo.GetFiles())
+            {
+                if (IsCodeFile(file.Extension))
+                    filePaths.Add(file.FullName);
+            }
+        }
+        catch { /* ignore */ }
     }
 
     private static string TruncateForContext(string s, int maxLen)
@@ -565,8 +738,13 @@ public partial class MainWindowViewModel : ViewModelBase
     partial void OnSelectedNodeChanged(FileNode? value)
     {
         Console.WriteLine($"Selected Node Changed: {value?.Path}");
+        // Avoid reloading content when selection was restored to same path (e.g. after tree rebuild / file watcher)
+        if (value != null && string.Equals(value.Path, _lastNavigatedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            ExpandToNode(Nodes, value);
+            return;
+        }
         GenerateAndNavigate(value);
-
         if (value != null)
         {
              ExpandToNode(Nodes, value);
@@ -730,6 +908,13 @@ public partial class MainWindowViewModel : ViewModelBase
         return null;
     }
 
+    /// <summary>After rebuilding the file tree, restore selection by path so we don't force "All JSON" every time (e.g. on watcher refresh).</summary>
+    private void RestoreTreeSelection(string? previousPath, FileNode allJsonNode)
+    {
+        var toSelect = !string.IsNullOrEmpty(previousPath) ? FindNode(Nodes, previousPath) : null;
+        SelectedNode = toSelect ?? allJsonNode;
+    }
+
     private static JsonTreeNode? FindJsonNodeBySourcePath(ObservableCollection<JsonTreeNode> nodes, string sourcePath)
     {
         if (string.IsNullOrEmpty(sourcePath)) return null;
@@ -777,6 +962,22 @@ public partial class MainWindowViewModel : ViewModelBase
             Dispatcher.UIThread.Post(() => action());
     }
 
+    /// <summary>Reads a text file with encoding detection (BOM) and strips BOM so Markdown.Avalonia displays correctly.</summary>
+    private static async Task<string> ReadTextFileWithEncodingAsync(string filePath)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException("File not found.", fullPath);
+        using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true);
+        using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+        var text = await reader.ReadToEndAsync().ConfigureAwait(false);
+        if (string.IsNullOrEmpty(text)) return text;
+        // Strip Unicode BOM if present (can cause Markdown.Avalonia to show nothing)
+        if (text[0] == '\uFEFF')
+            text = text.Substring(1);
+        return text;
+    }
+
     private void GenerateAndNavigate(FileNode? node)
     {
          CancelMarkdownPreview();
@@ -789,7 +990,16 @@ public partial class MainWindowViewModel : ViewModelBase
 
          if (node == null)
          {
+             _lastNavigatedPath = null;
              return;
+         }
+         _lastNavigatedPath = node.Path;
+
+         // Sync AI model with selection: codellama for source files, llama3 for other files; ignore directory nodes.
+         if (!node.IsDirectory)
+         {
+             bool isSourceFile = !string.IsNullOrEmpty(Path.GetExtension(node.Path)) && IsCodeFile(Path.GetExtension(node.Path));
+             NotifyModelConsumer(isSourceFile ? "codellama:latest" : "llama3:latest");
          }
 
          if (node.Path == "ALL_JSON_VIRTUAL_NODE")
@@ -816,107 +1026,115 @@ public partial class MainWindowViewModel : ViewModelBase
          {
              IsMarkdownVisible = true;
              IsJsonVisible = false;
+             ShowMarkdownAsRawText = false;
              _currentMarkdownPath = node.Path;
+             CurrentPreviewHtmlPath = null;
              ArchiveCommand.NotifyCanExecuteChanged();
              NotifyContextConsumer();
 
-             string hash = node.Path.GetHashCode().ToString("X");
-             string tempFileName = $"{Path.GetFileNameWithoutExtension(node.Path)}_{hash}.html";
-             string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
-             string tempPath = Path.Combine(tempDir, tempFileName);
-             Directory.CreateDirectory(tempDir);
-
-             bool needsGeneration = true;
-             if (File.Exists(tempPath))
-             {
-                 var srcTime = File.GetLastWriteTimeUtc(node.Path);
-                 var dstTime = File.GetLastWriteTimeUtc(tempPath);
-                 if (srcTime < dstTime) needsGeneration = false;
-             }
-
-             DispatchToUi(() => StatusMessage = needsGeneration ? "Generating preview..." : "Loading preview...");
+             string pathForThisPreview = Path.GetFullPath(node.Path);
 
              _markdownPreviewCts?.Dispose();
              _markdownPreviewCts = new CancellationTokenSource();
              var token = _markdownPreviewCts.Token;
-             string pathForThisPreview = node.Path;
 
+             // Load raw markdown immediately and show in Markdown.Avalonia (no pandoc required for in-app preview)
              _ = Task.Run(async () =>
              {
+                 string markdownText;
                  try
                  {
-                     if (needsGeneration)
-                     {
-                         Console.WriteLine($"Generating HTML for {pathForThisPreview}...");
-                         bool ok = await ConvertMarkdownToHtmlAsync(pathForThisPreview, tempPath);
-                         if (token.IsCancellationRequested) return;
-                         if (!ok)
-                         {
-                             DispatchToUi(() =>
-                             {
-                                 if (token.IsCancellationRequested) return;
-                                 Console.WriteLine("Failed to generate HTML");
-                                 SetFallbackHtmlSource("Markdown preview unavailable. Install <a href=\"https://pandoc.org/\">pandoc</a> to generate HTML preview.");
-                             });
-                             return;
-                         }
-                         Console.WriteLine($"Generated: {tempPath}");
-                     }
-
-                     if (token.IsCancellationRequested) return;
-
-                     string html = await File.ReadAllTextAsync(tempPath);
-                     string pathForBrowser = tempPath;
-                     string markdownText = "";
-                     try
-                     {
-                         markdownText = await File.ReadAllTextAsync(pathForThisPreview);
-                     }
-                     catch
-                     {
-                         // Ignore; we'll show empty if file can't be read
-                     }
-
-                     if (token.IsCancellationRequested) return;
-
-                     DispatchToUi(() =>
-                     {
-                         if (token.IsCancellationRequested) return;
-                         if (_currentMarkdownPath != pathForThisPreview) return;
-
-                         try
-                         {
-                             if (string.IsNullOrWhiteSpace(html))
-                             {
-                                 SetFallbackHtmlSource("Generated HTML was empty.");
-                                 return;
-                             }
-                             CurrentPreviewHtmlPath = pathForBrowser;
-                             CurrentPreviewMarkdownText = markdownText ?? "";
-                             IsPreviewOpenedInBrowser = true;
-                         }
-                         catch (Exception ex)
-                         {
-                             Console.WriteLine($"Error loading HTML: {ex.Message}");
-                             SetFallbackHtmlSource("Could not load preview.");
-                         }
-                     });
-                 }
-                 catch (OperationCanceledException)
-                 {
-                     // Task was cancelled (e.g. user navigated away)
+                     markdownText = await ReadTextFileWithEncodingAsync(pathForThisPreview);
                  }
                  catch (Exception ex)
                  {
-                     if (!token.IsCancellationRequested)
+                     markdownText = "";
+                     DispatchToUi(() =>
                      {
-                         Console.WriteLine($"Error generating preview: {ex.Message}");
-                         DispatchToUi(() => SetFallbackHtmlSource("Could not load preview."));
-                     }
+                         if (_currentMarkdownPath != node.Path) return;
+                         CurrentPreviewMarkdownText = "Could not read file: " + ex.Message;
+                         IsPreviewOpenedInBrowser = true;
+                     });
+                     return;
                  }
+                 if (token.IsCancellationRequested) return;
+                 // Make preview area visible first, then set content so MarkdownScrollViewer refreshes reliably
+                 DispatchToUi(() =>
+                 {
+                     if (token.IsCancellationRequested || _currentMarkdownPath != node.Path) return;
+                     CurrentPreviewMarkdownText = "";
+                     IsPreviewOpenedInBrowser = true;
+                     StatusMessage = "Markdown loaded.";
+                 });
+                 if (token.IsCancellationRequested) return;
+                 DispatchToUi(() =>
+                 {
+                     if (token.IsCancellationRequested || _currentMarkdownPath != node.Path) return;
+                     CurrentPreviewMarkdownText = markdownText ?? "";
+                 });
              });
              return;
          }
+
+         // Source tree: display code/project files in the markdown previewer (as a code block)
+         if (!node.IsDirectory)
+         {
+             var ext = Path.GetExtension(node.Path);
+             if (!string.IsNullOrEmpty(ext) && IsCodeFile(ext))
+             {
+                 IsMarkdownVisible = true;
+                 IsJsonVisible = false;
+                 _currentMarkdownPath = node.Path;
+                 CurrentPreviewHtmlPath = null;
+                 ArchiveCommand.NotifyCanExecuteChanged();
+                 NotifyContextConsumer();
+
+                 string pathForThisPreview = node.Path;
+                 _markdownPreviewCts?.Dispose();
+                 _markdownPreviewCts = new CancellationTokenSource();
+                 var token = _markdownPreviewCts.Token;
+
+                 _ = Task.Run(async () =>
+                 {
+                     string content;
+                     try
+                     {
+                         content = await File.ReadAllTextAsync(pathForThisPreview);
+                     }
+                     catch (Exception ex)
+                     {
+                         content = "";
+                         DispatchToUi(() =>
+                         {
+                             if (_currentMarkdownPath != pathForThisPreview) return;
+                             CurrentPreviewMarkdownText = "Could not read file: " + ex.Message;
+                             IsPreviewOpenedInBrowser = true;
+                         });
+                         return;
+                     }
+                     if (token.IsCancellationRequested) return;
+                     var lang = GetCodeBlockLanguage(pathForThisPreview);
+                     var markdownText = $"```{lang}\n{content}\n```";
+                     DispatchToUi(() =>
+                     {
+                         if (token.IsCancellationRequested || _currentMarkdownPath != pathForThisPreview) return;
+                         CurrentPreviewMarkdownText = markdownText;
+                         IsPreviewOpenedInBrowser = true;
+                         StatusMessage = "Source file loaded.";
+                     });
+                 });
+                 return;
+             }
+         }
+    }
+
+    private static string GetCodeBlockLanguage(string filePath)
+    {
+         var ext = Path.GetExtension(filePath);
+         if (string.IsNullOrEmpty(ext)) return "";
+         ext = ext.TrimStart('.').ToLowerInvariant();
+         if (ext == "csproj" || ext == "vbproj" || ext == "fsproj" || ext == "sln") return "xml";
+         return ext;
     }
 
     /// <summary>Removes duplicate entries by RequestId (case-insensitive). Keeps the first occurrence when ordered by timestamp descending (newest wins). Entries with empty RequestId are not deduplicated.</summary>
@@ -1080,7 +1298,17 @@ public partial class MainWindowViewModel : ViewModelBase
     private void OpenPreviewInBrowser()
     {
         if (!string.IsNullOrEmpty(CurrentPreviewHtmlPath))
+        {
             OpenHtmlInDefaultBrowser(CurrentPreviewHtmlPath);
+            return;
+        }
+        SetStatus("HTML preview is disabled.");
+    }
+
+    [RelayCommand]
+    private void ToggleShowRawMarkdown()
+    {
+        ShowMarkdownAsRawText = !ShowMarkdownAsRawText;
     }
 
     [RelayCommand]
@@ -1233,24 +1461,36 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             try
             {
-                var (allJsonNode, rootDto) = BuildTreeOffThread(resolvedPath);
+                var (allJsonNode, rootDto, documentsDto, sourceDto) = BuildTreeOffThread(resolvedPath);
                 DispatchToUi(() =>
                 {
                     try
                     {
+                        var previousPath = SelectedNode?.Path;
                         Nodes.Clear();
                         Nodes.Add(allJsonNode);
+                        if (documentsDto != null)
+                        {
+                            var documentsNode = ApplyTreeDtoToNodes(documentsDto);
+                            documentsNode.Name = "Documents";
+                            Nodes.Add(documentsNode);
+                        }
+                        if (sourceDto != null)
+                        {
+                            var sourceNode = ApplyTreeDtoToNodes(sourceDto);
+                            sourceNode.Name = "Source";
+                            Nodes.Add(sourceNode);
+                        }
                         if (rootDto != null)
                         {
                             var root = ApplyTreeDtoToNodes(rootDto);
                             Nodes.Add(root);
-                            SelectedNode = allJsonNode;
                         }
                         else
                         {
                             Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
-                            SelectedNode = allJsonNode;
                         }
+                        RestoreTreeSelection(previousPath, allJsonNode);
                     }
                     catch (Exception ex)
                     {
@@ -1957,21 +2197,117 @@ public partial class MainWindowViewModel : ViewModelBase
         public List<TreeDto> Children { get; } = new();
     }
 
-    /// <summary>Builds the file tree on a background thread; returns allJson node and root DTO (or null if dir missing).</summary>
-    private static (FileNode allJsonNode, TreeDto? rootDto) BuildTreeOffThread(string resolvedPath)
+    /// <summary>Builds the file tree on a background thread; returns allJson node, root DTO, Documents DTO, and Source DTO (code files from ../../src).</summary>
+    private static (FileNode allJsonNode, TreeDto? rootDto, TreeDto? documentsDto, TreeDto? sourceDto) BuildTreeOffThread(string resolvedPath)
     {
         var allJsonNode = new FileNode("ALL_JSON_VIRTUAL_NODE", false) { Name = "All JSON" };
-        if (!Directory.Exists(resolvedPath))
-            return (allJsonNode, null);
+        TreeDto? rootDto = null;
+        if (Directory.Exists(resolvedPath))
+        {
+            rootDto = new TreeDto { Path = resolvedPath, IsDirectory = true };
+            LoadChildrenDto(rootDto);
+        }
+        TreeDto? documentsDto = BuildDocumentsDto(resolvedPath);
+        TreeDto? sourceDto = BuildSourceDto(resolvedPath);
+        return (allJsonNode, rootDto, documentsDto, sourceDto);
+    }
 
-        var rootDto = new TreeDto { Path = resolvedPath, IsDirectory = true };
-        LoadChildrenDto(rootDto);
-        return (allJsonNode, rootDto);
+    /// <summary>Builds a Source tree DTO: ../../src with code files only, recursing into subdirs but ignoring session log folders.</summary>
+    private static TreeDto? BuildSourceDto(string resolvedPath)
+    {
+        string? sourcePath = GetSourcePath(resolvedPath);
+        if (string.IsNullOrEmpty(sourcePath))
+            return null;
+        var sourceDto = new TreeDto { Path = sourcePath, IsDirectory = true };
+        try
+        {
+            LoadSourceChildrenDto(sourceDto, resolvedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error building Source tree: {ex.Message}");
+        }
+        return sourceDto;
+    }
+
+    /// <summary>Recursively adds code files and subdirs to the node, skipping session log folder(s).</summary>
+    private static void LoadSourceChildrenDto(TreeDto node, string sessionsPathToIgnore)
+    {
+        var dirInfo = new DirectoryInfo(node.Path);
+        foreach (var dir in dirInfo.GetDirectories())
+        {
+            if (SourceDirectoriesToSkip.Contains(dir.Name))
+                continue;
+            var childFull = dir.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(childFull, sessionsPathToIgnore, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var child = new TreeDto { Path = dir.FullName, IsDirectory = true };
+            LoadSourceChildrenDto(child, sessionsPathToIgnore);
+            if (child.Children.Count > 0)
+                node.Children.Add(child);
+        }
+        foreach (var file in dirInfo.GetFiles())
+        {
+            if (IsCodeFile(file.Extension))
+                node.Children.Add(new TreeDto { Path = file.FullName, IsDirectory = false });
+        }
+    }
+
+    /// <summary>Builds a Documents tree DTO: parent of resolvedPath with only top-level .md files (ignoring session log subfolders).</summary>
+    private static TreeDto? BuildDocumentsDto(string resolvedPath)
+    {
+        string? parentPath = Path.GetDirectoryName(resolvedPath);
+        if (string.IsNullOrEmpty(parentPath) || !Directory.Exists(parentPath))
+            return null;
+        var documentsDto = new TreeDto { Path = parentPath, IsDirectory = true };
+        try
+        {
+            foreach (var file in new DirectoryInfo(parentPath).GetFiles("*.md"))
+            {
+                if (IsArchivedName(file.Name))
+                    continue;
+                documentsDto.Children.Add(new TreeDto { Path = file.FullName, IsDirectory = false });
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error building Documents tree: {ex.Message}");
+        }
+        return documentsDto;
     }
 
     private static bool IsArchivedName(string name) =>
         name.StartsWith("archived-", StringComparison.OrdinalIgnoreCase) ||
         name.StartsWith("archive-", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> CodeFileExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".cs", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go", ".java", ".kt", ".kts", ".vb", ".fs", ".fsx",
+        ".cpp", ".c", ".h", ".hpp", ".m", ".mm", ".swift", ".r", ".rb", ".php", ".scala", ".lua", ".sql", ".sh", ".ps1",
+        ".csproj", ".vbproj", ".fsproj", ".sln"
+    };
+
+    private static readonly HashSet<string> SourceDirectoriesToSkip = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "obj", "bin"
+    };
+
+    private static bool IsCodeFile(string extension) =>
+        !string.IsNullOrEmpty(extension) && CodeFileExtensions.Contains(extension);
+
+    /// <summary>Resolves ../../src relative to the sessions path.</summary>
+    private static string? GetSourcePath(string resolvedPath)
+    {
+        try
+        {
+            var full = Path.GetFullPath(Path.Combine(resolvedPath, "..", "..", "src"));
+            return Directory.Exists(full) ? full : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static void LoadChildrenDto(TreeDto node)
     {
@@ -2014,6 +2350,18 @@ public partial class MainWindowViewModel : ViewModelBase
         string resolvedPath = GetResolvedTargetPath();
         var allJsonNode = new FileNode("ALL_JSON_VIRTUAL_NODE", false) { Name = "All JSON" };
         Nodes.Add(allJsonNode);
+        var documentsNode = BuildDocumentsNode(resolvedPath);
+        if (documentsNode != null)
+        {
+            documentsNode.Name = "Documents";
+            Nodes.Add(documentsNode);
+        }
+        var sourceNode = BuildSourceNode(resolvedPath);
+        if (sourceNode != null)
+        {
+            sourceNode.Name = "Source";
+            Nodes.Add(sourceNode);
+        }
         if (!Directory.Exists(resolvedPath))
         {
             SetStatus($"Directory not found: {resolvedPath}");
@@ -2026,6 +2374,69 @@ public partial class MainWindowViewModel : ViewModelBase
         LoadChildren(root);
         Nodes.Add(root);
         SelectedNode = allJsonNode;
+    }
+
+    /// <summary>Builds the Documents FileNode (md files from parent of resolvedPath, no subfolders). Call on UI thread.</summary>
+    private static FileNode? BuildDocumentsNode(string resolvedPath)
+    {
+        string? parentPath = Path.GetDirectoryName(resolvedPath);
+        if (string.IsNullOrEmpty(parentPath) || !Directory.Exists(parentPath))
+            return null;
+        var documentsNode = new FileNode(parentPath, true);
+        try
+        {
+            foreach (var file in new DirectoryInfo(parentPath).GetFiles("*.md"))
+            {
+                if (IsArchivedName(file.Name))
+                    continue;
+                documentsNode.Children.Add(new FileNode(file.FullName, false));
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error building Documents node: {ex.Message}");
+        }
+        return documentsNode;
+    }
+
+    /// <summary>Builds the Source FileNode (code files from ../../src, recursing; skipping session log folders). Call on UI thread.</summary>
+    private static FileNode? BuildSourceNode(string resolvedPath)
+    {
+        string? sourcePath = GetSourcePath(resolvedPath);
+        if (string.IsNullOrEmpty(sourcePath))
+            return null;
+        var sourceNode = new FileNode(sourcePath, true);
+        try
+        {
+            LoadSourceChildren(sourceNode, resolvedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error building Source node: {ex.Message}");
+        }
+        return sourceNode;
+    }
+
+    private static void LoadSourceChildren(FileNode node, string sessionsPathToIgnore)
+    {
+        var dirInfo = new DirectoryInfo(node.Path);
+        foreach (var dir in dirInfo.GetDirectories())
+        {
+            if (SourceDirectoriesToSkip.Contains(dir.Name))
+                continue;
+            var childFull = dir.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(childFull, sessionsPathToIgnore, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var childNode = new FileNode(dir.FullName, true);
+            LoadSourceChildren(childNode, sessionsPathToIgnore);
+            if (childNode.Children.Count > 0)
+                node.Children.Add(childNode);
+        }
+        foreach (var file in dirInfo.GetFiles())
+        {
+            if (IsCodeFile(file.Extension))
+                node.Children.Add(new FileNode(file.FullName, false));
+        }
     }
 
     private void LoadChildren(FileNode node)
@@ -2093,24 +2504,36 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             try
             {
-                var (allJsonNode, rootDto) = BuildTreeOffThread(resolvedPath);
+                var (allJsonNode, rootDto, documentsDto, sourceDto) = BuildTreeOffThread(resolvedPath);
                 DispatchToUi(() =>
                 {
                     try
                     {
+                        var previousPath = SelectedNode?.Path;
                         Nodes.Clear();
                         Nodes.Add(allJsonNode);
+                        if (documentsDto != null)
+                        {
+                            var documentsNode = ApplyTreeDtoToNodes(documentsDto);
+                            documentsNode.Name = "Documents";
+                            Nodes.Add(documentsNode);
+                        }
+                        if (sourceDto != null)
+                        {
+                            var sourceNode = ApplyTreeDtoToNodes(sourceDto);
+                            sourceNode.Name = "Source";
+                            Nodes.Add(sourceNode);
+                        }
                         if (rootDto != null)
                         {
                             var root = ApplyTreeDtoToNodes(rootDto);
                             Nodes.Add(root);
-                            SelectedNode = allJsonNode;
                         }
                         else
                         {
                             Nodes.Add(new FileNode(resolvedPath, true) { Name = "Directory not found" });
-                            SelectedNode = allJsonNode;
                         }
+                        RestoreTreeSelection(previousPath, allJsonNode);
                     }
                     catch (Exception ex)
                     {

@@ -11,9 +11,9 @@ public class LayoutSettings
     public GridLengthDto PortraitViewerRowHeight { get; set; } = new(1, GridUnitType.Star);
     public GridLengthDto PortraitHistoryRowHeight { get; set; } = new(150, GridUnitType.Pixel);
 
-    /// <summary>JSON viewer: search index row height (row 2). Default 2*.</summary>
-    public GridLengthDto JsonViewerSearchIndexRowHeight { get; set; } = new(2, GridUnitType.Star);
-    /// <summary>JSON viewer: tree row height (row 4). Default *.</summary>
+    /// <summary>JSON viewer: search index row height (row 2). Default 200px; tree row is the only * so it fills the rest.</summary>
+    public GridLengthDto JsonViewerSearchIndexRowHeight { get; set; } = new(200, GridUnitType.Pixel);
+    /// <summary>JSON viewer: tree row (row 4) is always * and not persisted.</summary>
     public GridLengthDto JsonViewerTreeRowHeight { get; set; } = new(1, GridUnitType.Star);
 
     // Window State Persistence
@@ -51,11 +51,20 @@ public class GridLengthDto
 
     public GridLength ToGridLength()
     {
+        // When loading: Star with value > 20 was likely saved as pixel-by-mistake; apply as Pixel.
+        if (UnitType == GridUnitType.Star && Value > 20)
+            return new GridLength(Value, GridUnitType.Pixel);
         return new GridLength(Value, UnitType);
     }
 
+    /// <summary>Converts a GridLength to DTO. Normalizes Avalonia quirk where GridSplitter can store pixel height as Star (e.g. 211.2 Star) so we persist as Pixel for correct restore.</summary>
     public static GridLengthDto FromGridLength(GridLength length)
     {
+        if (length.GridUnitType == GridUnitType.Star && length.Value > 20)
+        {
+            // Star weights are typically 1, 2, 3. Large values are pixel heights stored as Star by the splitter.
+            return new GridLengthDto(length.Value, GridUnitType.Pixel);
+        }
         return new GridLengthDto(length.Value, length.GridUnitType);
     }
 }

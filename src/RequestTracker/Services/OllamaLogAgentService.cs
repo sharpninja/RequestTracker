@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -12,7 +13,7 @@ namespace RequestTracker.Services;
 /// <summary>Log agent that uses a local Ollama server (http://localhost:11434).</summary>
 public sealed class OllamaLogAgentService : ILogAgentService
 {
-    private const string DefaultModel = "llama3";
+    private const string DefaultModel = "llama3:latest";
     private const string DefaultBaseUrl = "http://localhost:11434";
     private static readonly string SystemPrompt = "You are an assistant for a log viewer app. The user sees request logs (Cursor, Copilot, or unified JSON). You receive a summary of the current view (filtered list and optionally the selected request). Help them query, filter, and understand the logs. Be concise and practical.";
 
@@ -27,7 +28,7 @@ public sealed class OllamaLogAgentService : ILogAgentService
         _httpClient = new HttpClient { BaseAddress = new Uri(_baseUrl), Timeout = TimeSpan.FromMinutes(2) };
     }
 
-    public async Task<string> SendMessageAsync(string userMessage, string contextSummary, string? model = null, CancellationToken cancellationToken = default)
+    public async Task<string> SendMessageAsync(string userMessage, string contextSummary, string? model = null, IProgress<string>? contentProgress = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userMessage))
             return "Please enter a message.";
@@ -39,11 +40,12 @@ public sealed class OllamaLogAgentService : ILogAgentService
         };
 
         var modelToUse = !string.IsNullOrWhiteSpace(model) ? model!.Trim() : _model;
+        var stream = contentProgress != null;
         var payload = new
         {
             model = modelToUse,
             messages,
-            stream = false
+            stream
         };
 
         var json = JsonSerializer.Serialize(payload);
@@ -51,6 +53,9 @@ public sealed class OllamaLogAgentService : ILogAgentService
 
         try
         {
+            if (stream)
+                return await SendMessageStreamingAsync(content, modelToUse, contentProgress!, cancellationToken).ConfigureAwait(false);
+
             var response = await _httpClient.PostAsync("/api/chat", content, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
@@ -77,6 +82,48 @@ public sealed class OllamaLogAgentService : ILogAgentService
         {
             return "Error: " + ex.Message;
         }
+    }
+
+    private async Task<string> SendMessageStreamingAsync(StringContent content, string modelToUse, IProgress<string> contentProgress, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(System.Net.Http.HttpMethod.Post, "/api/chat") { Content = content };
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            return $"Ollama error ({(int)response.StatusCode}): {response.ReasonPhrase}. Ensure Ollama is running (e.g. run 'ollama serve' and 'ollama run " + modelToUse + "').";
+        }
+
+        var accumulated = new StringBuilder();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 1024);
+
+        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("message", out var msgEl) && msgEl.TryGetProperty("content", out var contentEl))
+                {
+                    var chunk = contentEl.GetString();
+                    if (!string.IsNullOrEmpty(chunk))
+                    {
+                        accumulated.Append(chunk);
+                        contentProgress.Report(accumulated.ToString());
+                    }
+                }
+                if (root.TryGetProperty("done", out var doneEl) && doneEl.GetBoolean())
+                    break;
+            }
+            catch (JsonException)
+            {
+                // Skip malformed line
+            }
+        }
+
+        return accumulated.ToString();
     }
 
     /// <summary>Fetches available model names from the Ollama server (GET /api/tags).</summary>

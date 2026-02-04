@@ -1,8 +1,10 @@
+using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using RequestTracker.ViewModels;
 using RequestTracker.Models;
 using RequestTracker.Models.Json;
@@ -22,6 +24,8 @@ public partial class MainWindow : Window
     private ChatWindow? _chatWindow;
     /// <summary>Set during main window closing so SaveSettings can persist that the chat was open.</summary>
     private bool? _chatWindowWasOpenOnClosing;
+    /// <summary>True after Markdown.Avalonia throws (e.g. StaticBinding); we show raw text only.</summary>
+    private bool _markdownViewerUnsupported;
 
     public MainWindow()
     {
@@ -58,13 +62,17 @@ public partial class MainWindow : Window
             this.Width = _layoutSettings.WindowWidth;
             this.Height = _layoutSettings.WindowHeight;
 
-            // Only apply position if it looks on-screen (avoids window opening off-screen after monitor change)
+            // Control startup location entirely in code (no XAML default so saved position can stick)
             int x = (int)_layoutSettings.WindowX;
             int y = (int)_layoutSettings.WindowY;
-            if (x >= -50 && x <= 10000 && y >= -50 && y <= 10000 && (x != 0 || y != 0))
+            bool hasValidSavedPosition = x >= -50 && x <= 10000 && y >= -50 && y <= 10000 && (x != 0 || y != 0);
+            if (hasValidSavedPosition)
             {
+                this.WindowStartupLocation = WindowStartupLocation.Manual;
                 this.Position = new PixelPoint(x, y);
             }
+            else
+                this.WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
             // Never start minimized so the window is visible on launch
             this.WindowState = _layoutSettings.WindowState == WindowState.Minimized
@@ -81,20 +89,27 @@ public partial class MainWindow : Window
     {
         // Deferred ViewModel init (file tree + watcher) so window shows first; failures don't block display
         if (DataContext is MainWindowViewModel vm)
+        {
             vm.InitializeAfterWindowShown();
+            SubscribeMarkdownViewerToViewModel(vm);
+        }
 
         ApplyJsonViewerSplitterSettings();
 
-        // Force the saved position again after opening, as some platforms/WMs
-        // ignore initial position set in constructor or override it during show
-        if (_layoutSettings.WindowX != 0 || _layoutSettings.WindowY != 0)
+        // Re-apply saved position after window is shown; many platforms/WMs ignore pre-show position or center the window
+        int sx = (int)_layoutSettings.WindowX;
+        int sy = (int)_layoutSettings.WindowY;
+        bool validSaved = sx >= -50 && sx <= 10000 && sy >= -50 && sy <= 10000 && (sx != 0 || sy != 0);
+        if (validSaved && WindowState == WindowState.Normal)
         {
-            // Small delay to ensure window manager has finished initial placement
-            await Task.Delay(50);
-            if (WindowState == WindowState.Normal)
+            this.Position = new PixelPoint(sx, sy);
+            await Task.Delay(100);
+            // Apply again after a short delay in case the WM repositions on first frame
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                this.Position = new PixelPoint((int)_layoutSettings.WindowX, (int)_layoutSettings.WindowY);
-            }
+                if (WindowState == WindowState.Normal)
+                    this.Position = new PixelPoint(sx, sy);
+            });
         }
 
         // All platforms: if saved position is off-screen (e.g. disconnected monitor), put window on-screen
@@ -117,6 +132,31 @@ public partial class MainWindow : Window
 
         if (_layoutSettings.ChatWindowWasOpen)
             Dispatcher.UIThread.Post(() => ShowChatWindowIfRequested(), DispatcherPriority.Loaded);
+    }
+
+    /// <summary>Updates MarkdownViewer from ViewModel. If Markdown.Avalonia throws (e.g. StaticBinding), we switch to raw text and stop using the viewer.</summary>
+    private void SubscribeMarkdownViewerToViewModel(MainWindowViewModel vm)
+    {
+        if (MarkdownViewer == null) return;
+        void UpdateMarkdown()
+        {
+            if (_markdownViewerUnsupported || MarkdownViewer == null) return;
+            try
+            {
+                MarkdownViewer.Markdown = vm.CurrentPreviewMarkdownText ?? "";
+            }
+            catch (NotSupportedException)
+            {
+                _markdownViewerUnsupported = true;
+                vm.ShowMarkdownAsRawText = true;
+            }
+        }
+        UpdateMarkdown();
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainWindowViewModel.CurrentPreviewMarkdownText))
+                Dispatcher.UIThread.Post(UpdateMarkdown, DispatcherPriority.Normal);
+        };
     }
 
     private void LoadSettings()
@@ -192,8 +232,12 @@ public partial class MainWindow : Window
         {
             if (JsonViewerGrid?.RowDefinitions == null || JsonViewerGrid.RowDefinitions.Count < 5)
                 return;
-            JsonViewerGrid.RowDefinitions[2].Height = _layoutSettings.JsonViewerSearchIndexRowHeight.ToGridLength();
-            JsonViewerGrid.RowDefinitions[4].Height = _layoutSettings.JsonViewerTreeRowHeight.ToGridLength();
+            var searchIndexLength = _layoutSettings.JsonViewerSearchIndexRowHeight.ToGridLength();
+            // If saved as Star (old layout), use pixel so tree row remains the only * and fills the purple area
+            if (searchIndexLength.GridUnitType == GridUnitType.Star)
+                searchIndexLength = new GridLength(200, GridUnitType.Pixel);
+            JsonViewerGrid.RowDefinitions[2].Height = searchIndexLength;
+            JsonViewerGrid.RowDefinitions[4].Height = new GridLength(1, GridUnitType.Star); // always * so tree fills rest
         }
         catch (Exception ex)
         {
@@ -278,8 +322,8 @@ public partial class MainWindow : Window
         // Validate we have the expected number of rows/cols before accessing
         if (isPortrait)
         {
-            // Portrait expects Rows=5 (Tree, Split, Viewer, Split, History)
-            if (MainGrid.RowDefinitions.Count >= 5)
+            // Portrait expects Rows=6 (Tree, Split, Viewer, Split, History, StatusBar)
+            if (MainGrid.RowDefinitions.Count >= 6)
             {
                 _layoutSettings.PortraitTreeRowHeight = GridLengthDto.FromGridLength(MainGrid.RowDefinitions[0].Height);
                 _layoutSettings.PortraitViewerRowHeight = GridLengthDto.FromGridLength(MainGrid.RowDefinitions[2].Height);
@@ -288,8 +332,8 @@ public partial class MainWindow : Window
         }
         else
         {
-            // Landscape expects Cols=3 (Tree/Hist, Split, Viewer) and Rows=3 (Tree, Split, History)
-            if (MainGrid.ColumnDefinitions.Count >= 1 && MainGrid.RowDefinitions.Count >= 3)
+            // Landscape expects Cols=3 and Rows=4 (Tree, Split, History, StatusBar)
+            if (MainGrid.ColumnDefinitions.Count >= 1 && MainGrid.RowDefinitions.Count >= 4)
             {
                 _layoutSettings.LandscapeLeftColWidth = GridLengthDto.FromGridLength(MainGrid.ColumnDefinitions[0].Width);
                 _layoutSettings.LandscapeHistoryRowHeight = GridLengthDto.FromGridLength(MainGrid.RowDefinitions[2].Height);
@@ -310,8 +354,8 @@ public partial class MainWindow : Window
         if (isPortrait)
         {
             // Portrait: Vertical Stack
-            // Tree -> Splitter -> Viewer -> Splitter -> History
-            // Rows: *, 4, *, 4, 150
+            // Tree -> Splitter -> Viewer -> Splitter -> History -> StatusBar
+            // Rows: *, 4, *, 4, 150, Auto
             // Cols: *
 
             MainGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
@@ -321,6 +365,7 @@ public partial class MainWindow : Window
             MainGrid.RowDefinitions.Add(new RowDefinition(_layoutSettings.PortraitViewerRowHeight.ToGridLength()));    // Viewer
             MainGrid.RowDefinitions.Add(new RowDefinition(4, GridUnitType.Pixel));     // Splitter 2
             MainGrid.RowDefinitions.Add(new RowDefinition(_layoutSettings.PortraitHistoryRowHeight.ToGridLength()));   // History
+            MainGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));         // StatusBar
 
             // Tree (0,0)
             Grid.SetColumn(TreePanel, 0);
@@ -345,12 +390,17 @@ public partial class MainWindow : Window
             // History (0,4)
             Grid.SetColumn(HistoryPanel, 0);
             Grid.SetRow(HistoryPanel, 4);
+
+            // StatusBar (0,5) - full width
+            Grid.SetColumn(StatusBarBorder, 0);
+            Grid.SetColumnSpan(StatusBarBorder, 1);
+            Grid.SetRow(StatusBarBorder, 5);
         }
         else
         {
-            // Landscape: Left Pane (Tree/History) | Viewer
+            // Landscape: Left Pane (Tree/History) | Viewer, then StatusBar full width
             // Cols: 300, 4, *
-            // Rows: *, 4, 150
+            // Rows: *, 4, 150, Auto
 
             MainGrid.ColumnDefinitions.Add(new ColumnDefinition(_layoutSettings.LandscapeLeftColWidth.ToGridLength()));
             MainGrid.ColumnDefinitions.Add(new ColumnDefinition(4, GridUnitType.Pixel));
@@ -359,6 +409,7 @@ public partial class MainWindow : Window
             MainGrid.RowDefinitions.Add(new RowDefinition(1, GridUnitType.Star));      // Tree
             MainGrid.RowDefinitions.Add(new RowDefinition(4, GridUnitType.Pixel));     // Splitter 1
             MainGrid.RowDefinitions.Add(new RowDefinition(_layoutSettings.LandscapeHistoryRowHeight.ToGridLength()));   // History
+            MainGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));         // StatusBar
 
             // Tree (0,0)
             Grid.SetColumn(TreePanel, 0);
@@ -383,6 +434,11 @@ public partial class MainWindow : Window
             Grid.SetColumn(ViewerPanel, 2);
             Grid.SetRow(ViewerPanel, 0);
             Grid.SetRowSpan(ViewerPanel, 3);
+
+            // StatusBar (0-2, 3) - full width
+            Grid.SetColumn(StatusBarBorder, 0);
+            Grid.SetColumnSpan(StatusBarBorder, 3);
+            Grid.SetRow(StatusBarBorder, 3);
         }
     }
 
@@ -428,6 +484,18 @@ public partial class MainWindow : Window
             vm.ShowRequestDetailsCommand.Execute(entry);
     }
 
+    private void OnFileTreeTapped(object? sender, TappedEventArgs e)
+    {
+        if (e.Source is not Control source)
+            return;
+        var item = source.FindAncestorOfType<TreeViewItem>();
+        if (item?.DataContext is FileNode node && node.IsDirectory)
+        {
+            node.IsExpanded = !node.IsExpanded;
+            e.Handled = true;
+        }
+    }
+
     private void OpenChatWindow(object? sender, RoutedEventArgs e)
     {
         ShowChatWindowIfRequested();
@@ -447,15 +515,18 @@ public partial class MainWindow : Window
         var configModel = AgentConfigIo.GetModelFromConfig();
         var chatVm = new ChatWindowViewModel(agentService, mainVm.GetLogContextForAgent, configModel, model => AgentConfigIo.SetModelInConfig(model));
         mainVm.SetContextConsumer(s => chatVm.NotifyContextChanged(s));
+        mainVm.SetModelConsumer(m => { if (_chatWindow?.DataContext is ChatWindowViewModel cvm) cvm.SelectedModel = m; });
         _chatWindow = new ChatWindow { DataContext = chatVm };
         _chatWindow.Closed += (_, _) =>
         {
             mainVm.SetContextConsumer(null);
+            mainVm.SetModelConsumer(null);
             _chatWindow = null;
             PersistChatWindowClosed();
         };
         _chatWindow.Show();
         chatVm.NotifyContextChanged(mainVm.GetLogContextForAgent());
+        mainVm.ApplyModelForCurrentSelection();
     }
 
     private void PersistChatWindowClosed()

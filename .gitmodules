@@ -1,0 +1,3 @@
+[submodule "lib/Markdown.Avalonia"]
+	path = lib/Markdown.Avalonia
+	url = https://github.com/whistyun/Markdown.Avalonia.git
