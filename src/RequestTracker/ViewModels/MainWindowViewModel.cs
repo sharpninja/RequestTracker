@@ -23,7 +23,6 @@ namespace RequestTracker.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {
-    private const string TargetPath = @"E:\github\FunWasHad\docs\sessions";
 
     private static readonly JsonSerializerOptions CopilotJsonOptions = new()
     {
@@ -34,7 +33,9 @@ public partial class MainWindowViewModel : ViewModelBase
     /// <summary>
     /// Target path resolved for the current OS (Windows path on Windows, /mnt/... on Linux).
     /// </summary>
-    private static string GetResolvedTargetPath() => PathConverter.ToDisplayPath(TargetPath);
+    private static string GetResolvedTargetPath() => PathConverter.ToDisplayPath(AppSettings.ResolveSessionsRootPath());
+
+    private static string GetHtmlCacheDir() => AppSettings.ResolveHtmlCacheDirectory();
 
     private FileSystemWatcher? _watcher;
     private readonly IClipboardService _clipboardService;
@@ -343,7 +344,7 @@ public partial class MainWindowViewModel : ViewModelBase
             // Force regenerate
              string hash = SelectedNode.Path.GetHashCode().ToString("X");
              string tempFileName = $"{Path.GetFileNameWithoutExtension(SelectedNode.Path)}_{hash}.html";
-             string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
+             string tempDir = GetHtmlCacheDir();
              string tempPath = Path.Combine(tempDir, tempFileName);
 
              if (File.Exists(tempPath)) File.Delete(tempPath);
@@ -805,8 +806,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
         // Try to handle navigation relative to the current markdown file's directory
         // The path might be absolute (e.g. temp dir) or relative
-        // e.g. C:\Users\kingd\AppData\Local\Temp\RequestTracker_Cache\copilot\session-2026-02-02-073300\session-log.md
-        // But we want to map it to E:\github\FunWasHad\docs\sessions\copilot\session-2026-02-02-073300\session-log.md
+        // e.g. C:\Users\...\Temp\RequestTracker_Cache\copilot\session-2026-02-02-073300\session-log.md
+        // But we want to map it to the configured sessions root (e.g. <SessionsRootPath>\copilot\session-2026-02-02-073300\session-log.md)
 
         // If the path contains "RequestTracker_Cache", we should try to extract the relative part
         // But since we flatten the cache (or do we?), wait, let's check GenerateAndNavigate.
@@ -818,7 +819,7 @@ public partial class MainWindowViewModel : ViewModelBase
         // If README.md links to "copilot/session.md", browser tries to go to "RequestTracker_Cache/copilot/session.md"
         // In that case, 'path' will be ".../RequestTracker_Cache/copilot/session.md"
 
-        string tempDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
+        string tempDir = GetHtmlCacheDir();
         if (path.StartsWith(tempDir, StringComparison.OrdinalIgnoreCase))
         {
              // It's inside our temp dir structure.
@@ -1508,12 +1509,18 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private static string? ResolveCssPath()
     {
+        string? configuredPath = AppSettings.ResolveCssFallbackPath();
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            if (File.Exists(configuredPath)) return configuredPath;
+            Console.WriteLine($"Configured CSS path not found: {configuredPath}");
+        }
+
         string cssPath = Path.Combine(AppContext.BaseDirectory, "Assets", "styles.css");
         if (File.Exists(cssPath)) return cssPath;
         string sourceCss = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "RequestTracker", "Assets", "styles.css");
         if (File.Exists(sourceCss)) return Path.GetFullPath(sourceCss);
-        string hardcoded = @"E:\github\RequestTracker\src\RequestTracker\Assets\styles.css";
-        return File.Exists(hardcoded) ? hardcoded : null;
+        return null;
     }
 
     private bool ConvertMarkdownToHtml(string srcPath, string destPath)
@@ -2253,7 +2260,7 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Builds a Documents tree DTO: parent of resolvedPath with only top-level .md files (ignoring session log subfolders).</summary>
+    /// <summary>Builds a Documents tree DTO: parent of resolvedPath with .md files, recursing into subfolders (ignoring session log subfolders).</summary>
     private static TreeDto? BuildDocumentsDto(string resolvedPath)
     {
         string? parentPath = Path.GetDirectoryName(resolvedPath);
@@ -2262,18 +2269,35 @@ public partial class MainWindowViewModel : ViewModelBase
         var documentsDto = new TreeDto { Path = parentPath, IsDirectory = true };
         try
         {
-            foreach (var file in new DirectoryInfo(parentPath).GetFiles("*.md"))
-            {
-                if (IsArchivedName(file.Name))
-                    continue;
-                documentsDto.Children.Add(new TreeDto { Path = file.FullName, IsDirectory = false });
-            }
+            string sessionsPathToIgnore = resolvedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            LoadDocumentsChildrenDto(documentsDto, sessionsPathToIgnore);
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Error building Documents tree: {ex.Message}");
         }
         return documentsDto;
+    }
+
+    private static void LoadDocumentsChildrenDto(TreeDto node, string sessionsPathToIgnore)
+    {
+        var dirInfo = new DirectoryInfo(node.Path);
+        foreach (var dir in dirInfo.GetDirectories())
+        {
+            var childFull = dir.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(childFull, sessionsPathToIgnore, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var child = new TreeDto { Path = dir.FullName, IsDirectory = true };
+            LoadDocumentsChildrenDto(child, sessionsPathToIgnore);
+            if (child.Children.Count > 0)
+                node.Children.Add(child);
+        }
+        foreach (var file in dirInfo.GetFiles("*.md"))
+        {
+            if (IsArchivedName(file.Name))
+                continue;
+            node.Children.Add(new TreeDto { Path = file.FullName, IsDirectory = false });
+        }
     }
 
     private static bool IsArchivedName(string name) =>
@@ -2376,7 +2400,7 @@ public partial class MainWindowViewModel : ViewModelBase
         SelectedNode = allJsonNode;
     }
 
-    /// <summary>Builds the Documents FileNode (md files from parent of resolvedPath, no subfolders). Call on UI thread.</summary>
+    /// <summary>Builds the Documents FileNode (md files from parent of resolvedPath, recursing into subfolders). Call on UI thread.</summary>
     private static FileNode? BuildDocumentsNode(string resolvedPath)
     {
         string? parentPath = Path.GetDirectoryName(resolvedPath);
@@ -2385,18 +2409,35 @@ public partial class MainWindowViewModel : ViewModelBase
         var documentsNode = new FileNode(parentPath, true);
         try
         {
-            foreach (var file in new DirectoryInfo(parentPath).GetFiles("*.md"))
-            {
-                if (IsArchivedName(file.Name))
-                    continue;
-                documentsNode.Children.Add(new FileNode(file.FullName, false));
-            }
+            string sessionsPathToIgnore = resolvedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            LoadDocumentsChildren(documentsNode, sessionsPathToIgnore);
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Error building Documents node: {ex.Message}");
         }
         return documentsNode;
+    }
+
+    private static void LoadDocumentsChildren(FileNode node, string sessionsPathToIgnore)
+    {
+        var dirInfo = new DirectoryInfo(node.Path);
+        foreach (var dir in dirInfo.GetDirectories())
+        {
+            var childFull = dir.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(childFull, sessionsPathToIgnore, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var childNode = new FileNode(dir.FullName, true);
+            LoadDocumentsChildren(childNode, sessionsPathToIgnore);
+            if (childNode.Children.Count > 0)
+                node.Children.Add(childNode);
+        }
+        foreach (var file in dirInfo.GetFiles("*.md"))
+        {
+            if (IsArchivedName(file.Name))
+                continue;
+            node.Children.Add(new FileNode(file.FullName, false));
+        }
     }
 
     /// <summary>Builds the Source FileNode (code files from ../../src, recursing; skipping session log folders). Call on UI thread.</summary>

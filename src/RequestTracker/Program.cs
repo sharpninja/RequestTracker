@@ -6,7 +6,7 @@ namespace RequestTracker;
 
 sealed class Program
 {
-    private static readonly string HtmlCacheDir = Path.Combine(Path.GetTempPath(), "RequestTracker_Cache");
+    private static readonly string HtmlCacheDir = AppSettings.ResolveHtmlCacheDirectory();
 
     // Initialization code. Don't use any Avalonia, third-party APIs or any
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized

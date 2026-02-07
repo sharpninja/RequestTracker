@@ -30,6 +30,10 @@ The application monitors a specified directory (e.g., `docs/requests`) for JSON 
     *   Check **Interpretation** to understand how the AI understood the task.
     *   Use the **Original JSON** expander to see the raw data fields.
 
+## Configuration
+
+Edit `src/RequestTracker/appsettings.config` (copied next to the executable) to set `Paths.SessionsRootPath`, `Paths.HtmlCacheDirectory`, and `Paths.CssFallbackPath`. `Paths.HtmlCacheDirectory` supports environment variables such as `%TEMP%`.
+
 ## Tech Stack
 
 *   **Framework**: Avalonia UI (Cross-platform .NET XAML framework)
