@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Avalonia.AvaloniaEdit</id>
+    <version>11.0.0</version>
+    <authors>AvaloniaEdit</authors>
+    <license type="expression">MIT</license>
+    <licenseUrl>https://licenses.nuget.org/MIT</licenseUrl>
+    <description>This project is a port of AvalonEdit, a WPF-based text editor for Avalonia.</description>
+    <dependencies>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="Avalonia" version="11.0.0" exclude="Build,Analyzers" />
+        <dependency id="System.Collections.Immutable" version="1.6.0" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>

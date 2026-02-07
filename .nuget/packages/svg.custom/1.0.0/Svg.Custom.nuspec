@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Svg.Custom</id>
+    <version>1.0.0</version>
+    <authors>Wiesław Šoltés</authors>
+    <license type="expression">MS-PL</license>
+    <licenseUrl>https://licenses.nuget.org/MS-PL</licenseUrl>
+    <projectUrl>https://github.com/wieslawsoltes/Svg.Skia</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/wieslawsoltes/Svg.Skia/master/icon/SvgToPng.png</iconUrl>
+    <description>Custom build of the SVG rendering library.</description>
+    <copyright>Copyright © Wiesław Šoltés 2023</copyright>
+    <tags>svg vector graphics rendering 2d graphics geometry shapes</tags>
+    <repository type="git" url="https://github.com/wieslawsoltes/Svg.Skia" commit="2d9ef9767e31fc5b87655cad1022c2632b3fd33a" />
+    <dependencies>
+      <group targetFramework="net6.0">
+        <dependency id="ExCSS" version="4.1.4" exclude="Build,Analyzers" />
+        <dependency id="Fizzler" version="1.2.1" exclude="Build,Analyzers" />
+        <dependency id="System.Memory" version="4.5.4" exclude="Build,Analyzers" />
+        <dependency id="System.ObjectModel" version="4.3.0" exclude="Build,Analyzers" />
+        <dependency id="System.ValueTuple" version="4.5.0" exclude="Build,Analyzers" />
+      </group>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="ExCSS" version="4.1.4" exclude="Build,Analyzers" />
+        <dependency id="Fizzler" version="1.2.1" exclude="Build,Analyzers" />
+        <dependency id="System.Memory" version="4.5.4" exclude="Build,Analyzers" />
+        <dependency id="System.ObjectModel" version="4.3.0" exclude="Build,Analyzers" />
+        <dependency id="System.ValueTuple" version="4.5.0" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>

@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Runtime.InteropServices;
+using RequestTracker.Converters;
 
 namespace RequestTracker;
 
@@ -57,6 +59,8 @@ public sealed class AppSettings
     private static string NormalizePath(string value)
     {
         string expanded = Environment.ExpandEnvironmentVariables(value.Trim());
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && PathConverter.IsWindowsPath(expanded))
+            return Path.GetFullPath(PathConverter.ToWslPath(expanded));
         if (!Path.IsPathRooted(expanded))
             expanded = Path.Combine(AppContext.BaseDirectory, expanded);
         return Path.GetFullPath(expanded);
